@@ -17,10 +17,9 @@ enum{
     ATTR_READONLY = 2, // 只读取，不输出(REUSE的进阶)。若指定了该参数，out_buf一定为NULL。
 };
 
-SHARED int io_GetOutInfo(void* args, size_t in_t, size_t in_h, size_t in_w, size_t* out_t, size_t* out_h, size_t* out_w, int* attr){
-    *out_t = in_t;
-    *out_w = in_w;
-    *out_h = in_h;
+SHARED int io_GetOutInfo(void* args, size_t in_shape[2], size_t out_shape[2], int* attr){
+    out_shape[0] = in_shape[0]; // h
+    out_shape[1] = in_shape[1]; // w
     *attr = ATTR_REUSE;
     return 0;
 }
@@ -30,7 +29,7 @@ SHARED int io_GetOutInfo(void* args, size_t in_t, size_t in_h, size_t in_w, size
 
 // 单线程处理函数。对于img2arr.*.img.*（图像处理扩展类）来说，in_t始终为1，in_h和in_w分别对应图像的高度和宽度。
 // 当in_reuse=True时，out_buf有时指向in_buf（但不总是），可以更好的利用处理器优化。
-SHARED int f0(void* args, uint8_t* in_buf, uint8_t* out_buf, size_t in_t, size_t in_h, size_t in_w){
+SHARED int f0(void* args, uint8_t* in_buf, uint8_t* out_buf, size_t in_shape[2]){
     // args: uint8_t v[2], v[0]: +(0)/-(1), v[1]: value
     uint8_t *v = (uint8_t*)args;
     bool op = v[0];
@@ -40,7 +39,7 @@ SHARED int f0(void* args, uint8_t* in_buf, uint8_t* out_buf, size_t in_t, size_t
     bool opB = v[4];
     bool opA = v[5];
 
-    const size_t total_size = in_t * in_h * in_w * 4;
+    const size_t total_size = in_shape[0] * in_shape[1] * 4;
     if(op){  // -
         for(size_t p = 0; p < total_size; p+=4){
             /* (x > val) ? (x - val) : 0 */
@@ -63,7 +62,7 @@ SHARED int f0(void* args, uint8_t* in_buf, uint8_t* out_buf, size_t in_t, size_t
 
 // #include <stdio.h> // 仅调试用
 
-SHARED int f1(size_t threads, size_t idx, void* args, uint8_t* in_buf, uint8_t* out_buf, size_t in_t, size_t in_h, size_t in_w){
+SHARED int f1(size_t threads, size_t idx, void* args, uint8_t* in_buf, uint8_t* out_buf, size_t in_shape[2]){
     uint8_t *v = (uint8_t*)args;
     bool op = v[0];
     uint8_t val = v[1];
@@ -72,7 +71,7 @@ SHARED int f1(size_t threads, size_t idx, void* args, uint8_t* in_buf, uint8_t* 
     bool opB = v[4];
     bool opA = v[5];
 
-    const size_t pixels = /*in_t * */in_h * in_w;
+    const size_t pixels = in_shape[0] * in_shape[1];
     // 计算自己要处理的索引范围
     const size_t start = (pixels * idx / threads) * 4;
     const size_t end = (pixels * (idx + 1) / threads) * 4;

@@ -17,10 +17,9 @@ enum{
     ATTR_READONLY = 2, // 只读取，不输出(REUSE的进阶)。若指定了该参数，out_buf一定为NULL。
 };
 
-SHARED int io_GetOutInfo(void* args, size_t in_t, size_t in_h, size_t in_w, size_t* out_t, size_t* out_h, size_t* out_w, int* attr){
-    *out_t = in_t;
-    *out_w = in_w;
-    *out_h = in_h;
+SHARED int io_GetOutInfo(void* args, size_t in_shape[2], size_t out_shape[2], int* attr){
+    out_shape[0] = in_shape[0]; // h
+    out_shape[1] = in_shape[1]; // w
     *attr = ATTR_REUSE;
     return 0;
 }
@@ -44,7 +43,7 @@ typedef struct{
 
 static int main(bool useint, int contrast_int, int centgray_int, 
     size_t start_i, size_t end_i, 
-    uint8_t* in_buf, uint8_t* out_buf, size_t in_t, size_t in_h, size_t in_w){
+    uint8_t* in_buf, uint8_t* out_buf, size_t shape[2]){
 
     if(useint){
         for(size_t p = start_i; p < end_i; p += 4){
@@ -78,26 +77,26 @@ static int main(bool useint, int contrast_int, int centgray_int,
     }
 }
 
-SHARED int f0(args_t* args, uint8_t* in_buf, uint8_t* out_buf, size_t in_t, size_t in_h, size_t in_w){
+SHARED int f0(args_t* args, uint8_t* in_buf, uint8_t* out_buf, size_t in_shape[2]){
     
     bool useint = args->useint;
     int contrast_int = args->contrast;
     int centgray_int = args->centgray;
     
-    const size_t pixels = in_t * in_h * in_w;
+    const size_t pixels = in_shape[0] * in_shape[1];
 
-    return main(useint, contrast_int, centgray_int, 0, pixels * 4, in_buf, out_buf, in_t, in_h, in_w);
+    return main(useint, contrast_int, centgray_int, 0, pixels * 4, in_buf, out_buf, in_shape);
     
 }
 
-SHARED int f1(size_t threads, size_t idx, args_t* args, uint8_t* in_buf, uint8_t* out_buf, size_t in_t, size_t in_h, size_t in_w){
+SHARED int f1(size_t threads, size_t idx, args_t* args, uint8_t* in_buf, uint8_t* out_buf, size_t in_shape[2]){
     bool useint = args->useint;
     int contrast_int = args->contrast;
     int centgray_int = args->centgray;
 
-    const size_t pixels = in_t * in_h * in_w;
+    const size_t pixels = in_shape[0] * in_shape[1];
     const size_t start_i = (pixels * idx / threads) * 4;
     const size_t end_i = (pixels * (idx + 1) / threads) * 4;
 
-    return main(useint, contrast_int, centgray_int, start_i, end_i, in_buf, out_buf, in_t, in_h, in_w);
+    return main(useint, contrast_int, centgray_int, start_i, end_i, in_buf, out_buf, in_shape);
 }

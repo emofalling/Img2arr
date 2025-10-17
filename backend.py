@@ -78,22 +78,22 @@ PlProcCore = CDLL(os.path.join(LIB_PATH, f"PlProcCore.{soext}"), use_errno=True,
 """
 int SingleCore(char* caller, void* func, void* args, int *ret,
     uint8_t* in_buffer, uint8_t* out_buffer, 
-    size_t in_t, size_t in_h, size_t in_w)
+    size_t in_shape[])
 """
 PlProcCore.SingleCore.argtypes = [
     c_char_p, c_void_p, c_void_p, POINTER(c_int),
-    POINTER(c_uint8), POINTER(c_uint8), c_size_t, c_size_t, c_size_t
+    POINTER(c_uint8), POINTER(c_uint8), POINTER(c_size_t)
 ]
 PlProcCore.SingleCore.restype = c_int
 """
 该函数已弃用
 int MultiCore_old(char* caller, size_t threadnum, void* func, void* args, int *ret,
     uint8_t* in_buffer, uint8_t* out_buffer,
-    size_t in_t, size_t in_h, size_t in_w)
+    size_t in_shape[])
 """
 PlProcCore.MultiCore_old.argtypes = [
     c_char_p, c_size_t, c_void_p, c_void_p, POINTER(c_int),
-    POINTER(c_uint8), POINTER(c_uint8), c_size_t, c_size_t, c_size_t
+    POINTER(c_uint8), POINTER(c_uint8), POINTER(c_size_t)
 ]
 PlProcCore.MultiCore.restype = c_int
 """
@@ -104,11 +104,11 @@ PlProcCore.InitThreadPool.restype = c_size_t
 """
 int MultiCore(char* caller, void* func, void* args, int *ret,
     uint8_t* in_buffer, uint8_t* out_buffer,
-    size_t in_t, size_t in_h, size_t in_w)
+    size_t in_shape[])
 """
 PlProcCore.MultiCore.argtypes = [
     c_char_p, c_void_p, c_void_p, POINTER(c_int),
-    POINTER(c_uint8), POINTER(c_uint8), c_size_t, c_size_t, c_size_t
+    POINTER(c_uint8), POINTER(c_uint8), POINTER(c_size_t)
 ]
 PlProcCore.MultiCore.restype = c_int
 """
@@ -276,26 +276,26 @@ def _load_exts_cdll(file: str, regname_prefix: str) -> CDLL:
     if not sgn.startswith(regname_prefix):
         raise ValueError(f"Invalid signature: {sgn}. Expected prefix: {regname_prefix}* .")
     # 检查基本函数是否存在
-    # # int io_GetOutInfo(void* args, size_t in_t, size_t in_h, size_t in_w, size_t* out_t, size_t* out_h, size_t* out_w, int* attr)
+    # # int io_GetOutInfo(void* args, size_t in_shape[], size_t out_shape[], int* attr)
     if not hasattr(cdll, "io_GetOutInfo"):
         raise AttributeError(f"Cannot found function \"# int io_GetOutInfo(void* args, size_t in_t, size_t in_h, size_t in_w, size_t* out_t, size_t* out_h, size_t* out_w, int* attr)\"")
     cdll.io_GetOutInfo.restype = c_int
-    cdll.io_GetOutInfo.argtypes = [c_void_p, c_size_t, c_size_t, c_size_t, POINTER(c_size_t), POINTER(c_size_t), POINTER(c_size_t), POINTER(c_int)]
+    cdll.io_GetOutInfo.argtypes = [c_void_p, POINTER(c_size_t), POINTER(c_size_t), POINTER(c_int)]
     # 单核和多核至少有一个可用
-    # 单核：int f0(void* args, uint8_t* int_buf, uint8_t* out_buf, size_t in_t, size_t in_h, size_t in_w)
-    # 多核：int f1(size_t threads, size_t idx, void* args, uint8_t* in_buf, uint8_t* out_buf, size_t in_t, size_t in_h, size_t in_w)
+    # 单核：int f0(void* args, uint8_t* int_buf, uint8_t* out_buf, size_t in_shape[])
+    # 多核：int f1(size_t threads, size_t idx, void* args, uint8_t* in_buf, uint8_t* out_buf, size_t in_shape[])
     if not hasattr(cdll, "f0") and not hasattr(cdll, "f1"):
         raise AttributeError("Cannot found function "
-                        "\"int f0(void* args, uint8_t* int_buf, uint8_t* out_buf, size_t in_t, size_t in_h, size_t in_w)\""
+                        "\"int f0(void* args, uint8_t* int_buf, uint8_t* out_buf, size_t in_shape[])\""
                         "or"
-                        "\"int f1(size_t threads, size_t idx, void* args, uint8_t* in_buf, uint8_t* out_buf, size_t in_t, size_t in_h, size_t in_w)\""
+                        "\"int f1(size_t threads, size_t idx, void* args, uint8_t* in_buf, uint8_t* out_buf, size_t in_shape[])\""
         )
     if hasattr(cdll, "f0"):
         cdll.f0.restype = c_int
-        cdll.f0.argtypes = [c_void_p, POINTER(c_uint8), POINTER(c_uint8), c_size_t, c_size_t, c_size_t]
+        cdll.f0.argtypes = [c_void_p, POINTER(c_uint8), POINTER(c_uint8), POINTER(c_size_t)]
     if hasattr(cdll, "f1"):
         cdll.f1.restype = c_int
-        cdll.f1.argtypes = [c_size_t, c_size_t, c_void_p, POINTER(c_uint8), POINTER(c_uint8), c_size_t, c_size_t, c_size_t]
+        cdll.f1.argtypes = [c_size_t, c_size_t, c_void_p, POINTER(c_uint8), POINTER(c_uint8), POINTER(c_size_t)]
     return cdll
 
 def _load_exts_ctlext(file: str, cdll: CDLL) -> ModuleType:
@@ -368,7 +368,7 @@ class Img2arrPIPE:
         # 原图
         self.img = array(Image.open(imgf).convert("RGBA"), dtype=uint8)
         # reshape
-        self.img.shape = (1, self.img.shape[0], self.img.shape[1], self.img.shape[2])
+        # self.img.shape = (self.img.shape[0], self.img.shape[1], self.img.shape[2])
         self.extdc = extdc
         # 原图与预处理间的中间缓冲区
         self.img_pre_buf: list[MidBuffer] = []
@@ -466,16 +466,17 @@ class Pre_iter:
         if i not in wlist:
             wlist.append(i)
     
-    def next_buf(self, t: int, h: int, w: int):
+    def next_buf(self, shape: tuple):
         """获取下一个中间缓冲区，并标记"""
+        shape_ = (*shape, 4)
         self.cur_buf_index += 1
         if self.cur_buf_index >= len(self.img_pre_buf):
-            self.img_pre_buf.append(MidBuffer(empty((t, h, w, 4), dtype=uint8)))
+            self.img_pre_buf.append(MidBuffer(empty(shape_, dtype=uint8)))
         buf = self.img_pre_buf[self.cur_buf_index]
         arr = buf.arr
         # 如果shape对不上，则resize
-        if arr.shape != (t, h, w, 4):
-            buf.resize((t, h, w, 4), refcheck=False)
+        if arr.shape != shape_:
+            buf.resize(shape_, refcheck=False)
         # print("Create new buf at", self.cur_buf_index)
         return buf
     def clear_buf(self):
@@ -525,25 +526,25 @@ class Pre_iter:
             # int io_GetOutInfo(void* args, size_t in_t, size_t in_h, size_t in_w, size_t* out_t, size_t* out_h, size_t* out_w, int* attr)
             if not hasattr(dll, "io_GetOutInfo"):
                 raise AttributeError("Cannot found function \"int io_GetOutInfo(void* args, size_t in_t, size_t in_h, size_t in_w, size_t* out_t, size_t* out_h, size_t* out_w, int* attr)\" in ext")
-            out_t = c_size_t(0)
-            out_h = c_size_t(0)
-            out_w = c_size_t(0)
+            out_shape_ct = (c_size_t * 2)() # 未来会更改shape数
             out_attr = c_int(0)
 
             # 获取输入的shape
-            in_shape = in_buf.arr.shape
+            in_shape = in_buf.arr.shape[:-1]
+            in_shape_ct = (c_size_t * len(in_shape))(*in_shape)
 
-            ret = dll.io_GetOutInfo(args, in_shape[0], in_shape[1], in_shape[2],
-                                    byref(out_t), byref(out_h), byref(out_w), byref(out_attr))
+            ret = dll.io_GetOutInfo(args, in_shape_ct,
+                                    out_shape_ct, byref(out_attr))
             if ret != 0:
                 raise AttributeError(f"Cannot get out info from ext, returned {ret}")
-            out_t = out_t.value
-            out_h = out_h.value
-            out_w = out_w.value
+            out_shape = tuple(out_shape_ct)
             out_attr = out_attr.value
+            # 对于只读扩展，设置输出shape为输入shape
+            if out_attr == PRE_ATTRS.ATTR_READONLY:
+                out_shape = in_shape
         elif name == "":
             # 特殊扩展：REUSE，输入复制到输出
-            out_t, out_h, out_w, _ = in_buf.arr.shape
+            out_shape = in_buf.arr.shape[:-1]
             out_attr = PRE_ATTRS.ATTR_REUSE
 
         else:
@@ -552,7 +553,7 @@ class Pre_iter:
         # 对于具有head的只读扩展，输入数组需要特殊处理
         if is_head and out_attr == PRE_ATTRS.ATTR_READONLY:
             # 申请一个buf，并将self.img复制过去
-            in_buf = self.next_buf(out_t, out_h, out_w)
+            in_buf = self.next_buf(in_shape)
             in_buf_name = str(self.cur_buf_index)
             nparr_copyto(in_buf.arr, self.img.arr, "no")
             self.add_buf_writer(self.i)
@@ -564,9 +565,9 @@ class Pre_iter:
             out_buf = self.pre
             out_buf_name = "pre" # 调试用，跟踪管线路径
             # 检查尺寸是否匹配
-            if out_buf.arr.shape != (out_t, out_h, out_w, 4):
+            if out_buf.arr.shape != (*out_shape, 4):
                 # 调整大小
-                self.pre.resize((out_t, out_h, out_w, 4), refcheck=False)
+                self.pre.resize((*out_shape, 4), refcheck=False)
                 self.pre_resized = True
             else:
                 self.pre_resized = False
@@ -579,7 +580,7 @@ class Pre_iter:
             if out_attr == PRE_ATTRS.ATTR_REUSE and not is_head:
                 # 输入可复用，在默认模式下直接使用输入缓冲区
                 if self.mode == PRE_PIPE_MODES.PIPE_MODE_SPEED: 
-                    out_buf = self.next_buf(out_t, out_h, out_w)
+                    out_buf = self.next_buf(out_shape)
                     out_buf_name = str(self.cur_buf_index)
                 else:
                     out_buf = in_buf
@@ -589,7 +590,7 @@ class Pre_iter:
                 out_buf = None
                 out_buf_name = "NULL"
             else:
-                out_buf = self.next_buf(out_t, out_h, out_w)
+                out_buf = self.next_buf(out_shape)
                 out_buf_name = str(self.cur_buf_index)
             if out_buf is not None:
                 # 有输出缓冲区，添加写指针
@@ -622,6 +623,7 @@ class Pre_iter:
             outbuf_ptr = out_buf.arrptr
         # 获取输入的shape
         in_shape = in_buf.arr.shape
+        in_shape_ct = (c_size_t * len(in_shape))(*in_shape)
         # 加载extdc的对应dll
         dll = self.extdc[EXT_TYPE_PREP]["img"][name][EXT_OP_CDLL]
         result = PIPENodeResult()
@@ -633,7 +635,7 @@ class Pre_iter:
             ret_list[:] = 114514
             # 多核
             ret = PlProcCore.MultiCore(bytes(name, "utf-8"), dll.f1, args, ret_list.ctypes.data_as(POINTER(c_int)), 
-                                       inbuf_ptr, outbuf_ptr, in_shape[0], in_shape[1], in_shape[2])
+                                       inbuf_ptr, outbuf_ptr, in_shape_ct)
             result.proc_mode = EXT_PATH_MULTICORE
             result.results = ret_list
             result.ret = ret
@@ -642,7 +644,7 @@ class Pre_iter:
             print("Single Core")
             ret_main = c_int(114514)
             ret = PlProcCore.SingleCore(bytes(name, "utf-8"), dll.f0, args, byref(ret_main), 
-                                        inbuf_ptr, outbuf_ptr, in_shape[0], in_shape[1], in_shape[2])
+                                        inbuf_ptr, outbuf_ptr, in_shape_ct)
             result.proc_mode = EXT_PATH_SINGLECORE
             result.results = ret_main.value
             result.ret = ret

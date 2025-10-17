@@ -20,11 +20,10 @@ from functools import partial
 
 from numpy.typing import NDArray
 
-# img.shape: (t, h, w, c)
-IMG_SHAPE_T = 0
-IMG_SHAPE_H = 1
-IMG_SHAPE_W = 2
-IMG_SHAPE_C = 3
+# img.shape: (h, w, c)
+IMG_SHAPE_H = 0
+IMG_SHAPE_W = 1
+IMG_SHAPE_C = 2
 
 class CustomUI:
     """自定义UI。不需要实例化"""

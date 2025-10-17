@@ -28,10 +28,8 @@ enum{
     ATTR_READONLY = 2, // 只读取，不输出(REUSE的进阶)。若指定了该参数，out_buf一定为NULL。
 };
 
-SHARED int io_GetOutInfo(void* args, size_t in_t, size_t in_h, size_t in_w, size_t* out_t, size_t* out_h, size_t* out_w, int* attr){
-    *out_t = in_t;
-    *out_w = in_w;
-    *out_h = in_h;
+SHARED int io_GetOutInfo(void* args, size_t in_shape[2], size_t out_shape[2], int* attr){
+    // 只读扩展不需要输出
     *attr = ATTR_READONLY;
     return 0;
 }
@@ -51,11 +49,8 @@ typedef struct{
     uint64_t *A; // 每个任务的直方图求和结果：A， 256为一间隔
 }__attribute__((packed)) args_f1_t;
 
-// 单线程处理函数。对于img2arr.*.img.*（图像处理扩展类）来说，in_t始终为1，in_h和in_w分别对应图像的高度和宽度。
-// 当in_reuse=True时，out_buf有时指向in_buf（但不总是），可以更好的利用处理器优化。
-SHARED int f0(args_f0_t* args, uint8_t* in_buf, uint8_t* out_buf, size_t in_t, size_t in_h, size_t in_w){
-    // args: uint8_t v[2], v[0]: +(0)/-(1), v[1]: value
-    size_t size = in_t * in_h * in_w;
+SHARED int f0(args_f0_t* args, uint8_t* in_buf, uint8_t* out_buf, size_t in_shape[2]){
+    size_t size = in_shape[0] * in_shape[1];
     uint64_t R[256] = {0}, 
              G[256] = {0}, 
              B[256] = {0}, 
@@ -85,8 +80,8 @@ SHARED int f0(args_f0_t* args, uint8_t* in_buf, uint8_t* out_buf, size_t in_t, s
 
 // #include <stdio.h> // 仅调试用
 
-SHARED int f1(size_t threads, size_t idx, args_f1_t* args, uint8_t* in_buf, uint8_t* out_buf, size_t in_t, size_t in_h, size_t in_w){
-    size_t size = in_t * in_h * in_w;
+SHARED int f1(size_t threads, size_t idx, args_f1_t* args, uint8_t* in_buf, uint8_t* out_buf, size_t in_shape[2]){
+    size_t size = in_shape[0] * in_shape[1];
     size_t start_i = (size * idx / threads) * 4;
     size_t end_i = (size * (idx + 1) / threads) * 4;
     uint64_t R[256] = {0}, 

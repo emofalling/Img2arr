@@ -23,8 +23,8 @@
 
 volatile const char DEFINE[] = "This a custom library for parallel processing, use for img2arr project.";
 
-using SingleCoreFunc = int(*)(void* args, uint8_t* int_buf, uint8_t* out_buf, size_t in_t, size_t in_h, size_t in_w);
-using MultiCoreFunc = int(*)(size_t threads, size_t idx, void* args, uint8_t* in_buf, uint8_t* out_buf, size_t in_t, size_t in_h, size_t in_w);
+using SingleCoreFunc = int(*)(void* args, uint8_t* int_buf, uint8_t* out_buf, size_t in_shape[]);
+using MultiCoreFunc = int(*)(size_t threads, size_t idx, void* args, uint8_t* in_buf, uint8_t* out_buf, size_t in_shape[]);
 
 // 核心。返回值：
 // 对于单核，返回值恒返回0，ret[0]被设为func的返回值值
@@ -37,10 +37,10 @@ using MultiCoreFunc = int(*)(size_t threads, size_t idx, void* args, uint8_t* in
 
 cdecl SHARED int SingleCore(char* caller, void* func, void* args, int *ret,
     uint8_t* in_buffer, uint8_t* out_buffer, 
-    size_t in_t, size_t in_h, size_t in_w)
+    size_t in_shape[])
 {
     SingleCoreFunc func_ = (SingleCoreFunc)func;
-    *ret = func_(args, in_buffer, out_buffer, in_t, in_h, in_w);
+    *ret = func_(args, in_buffer, out_buffer, in_shape);
     return 0;
 }
 
@@ -50,9 +50,7 @@ struct mtTask{
     size_t idx;
     MultiCoreFunc func;
     void* args;
-    size_t in_t;
-    size_t in_h;
-    size_t in_w;
+    size_t *in_shape;
     uint8_t* in_buffer;
     uint8_t* out_buffer;
     int* ret;
@@ -84,7 +82,7 @@ static void ThreadPoolFunc(){
         // 解锁
         lock.unlock();
         // 执行任务
-        int ret = task.func(task.threads, task.idx, task.args, task.in_buffer, task.out_buffer, task.in_t, task.in_h, task.in_w);
+        int ret = task.func(task.threads, task.idx, task.args, task.in_buffer, task.out_buffer, task.in_shape);
         // 将返回值存入ret
         task.ret[task.idx] = ret;
         // 任务完成
@@ -128,7 +126,7 @@ cdecl SHARED size_t InitThreadPool(size_t threadnum){
 // 旧实现，现已启用
 cdecl SHARED int MultiCore_old(char* caller, size_t threadnum, void* func, void* args, int *ret,
     uint8_t* in_buffer, uint8_t* out_buffer,
-    size_t in_t, size_t in_h, size_t in_w)
+    size_t in_shape[])
 {
     
     MultiCoreFunc func_ = (MultiCoreFunc)func;
@@ -137,8 +135,8 @@ cdecl SHARED int MultiCore_old(char* caller, size_t threadnum, void* func, void*
     for(size_t i = 0; i < threadnum; i++){
         try{
             // printf("PlProcCore: On caller %s, Creating thread %d\n", caller, i);
-            threads[i] = std::thread([ret, func_, threadnum, args, in_buffer, out_buffer, in_t, in_h, in_w](size_t i){
-                ret[i] = func_(threadnum, i, args, in_buffer, out_buffer, in_t, in_h, in_w);
+            threads[i] = std::thread([ret, func_, threadnum, args, in_buffer, out_buffer, in_shape](size_t i){
+                ret[i] = func_(threadnum, i, args, in_buffer, out_buffer, in_shape);
             }, i);
         }catch(std::system_error &e){
             fprintf(stderr, "PlProcCore Error: On caller %s, Failed to create thread %zu: %s\n", caller, i, e.what());
@@ -154,7 +152,7 @@ cdecl SHARED int MultiCore_old(char* caller, size_t threadnum, void* func, void*
 
 cdecl SHARED int MultiCore(char* caller, void* func, void* args, int *ret,
     uint8_t* in_buffer, uint8_t* out_buffer,
-    size_t in_t, size_t in_h, size_t in_w)
+    size_t in_shape[])
 {
     // 添加至队列
     size_t threads = ThreadPool.size();
@@ -168,9 +166,7 @@ cdecl SHARED int MultiCore(char* caller, void* func, void* args, int *ret,
             .idx = i,
             .func = (MultiCoreFunc)func,
             .args = args,
-            .in_t = in_t,
-            .in_h = in_h,
-            .in_w = in_w,
+            .in_shape = in_shape,
             .in_buffer = in_buffer,
             .out_buffer = out_buffer,
             .ret = ret

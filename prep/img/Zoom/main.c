@@ -51,12 +51,9 @@ typedef struct {
 #define round5(x) ((x) + 0.5f)
 #define clip(x, min, max) ((x) < (min) ? (min) : ((x) > (max) ? (max) : (x)))
 
-SHARED int io_GetOutInfo(args_t* args, size_t in_t, size_t in_h, size_t in_w, size_t* out_t, size_t* out_h, size_t* out_w, int* attr){
-    size_t out_x = round5(in_w * args->sx);
-    size_t out_y = round5(in_h * args->sy);
-    *out_t = in_t;
-    *out_h = out_y;
-    *out_w = out_x;
+SHARED int io_GetOutInfo(args_t* args, size_t in_shape[2], size_t out_shape[2], int* attr){
+    out_shape[0] = round5(in_shape[0] * args->sy); // h
+    out_shape[1] = round5(in_shape[1] * args->sx); // w
     // attr默认为none
     return 0;
 }
@@ -241,27 +238,26 @@ static int main_enum(scale_mode mode, float scale_x, float scale_y, size_t in_w,
     return 0;
 }
 
-SHARED int f1(size_t threads, size_t idx, args_t* args, uint8_t* in_buf, uint8_t* out_buf, size_t in_t, size_t in_h, size_t in_w){
-    size_t out_x = round5(in_w * args->sx);
-    size_t out_y = round5(in_h * args->sy);
+SHARED int f1(size_t threads, size_t idx, args_t* args, uint8_t* in_buf, uint8_t* out_buf, size_t in_shape[2]){
+    const size_t out_x = round5(in_shape[1] * args->sx);
+    const size_t out_y = round5(in_shape[0] * args->sy);
 
     const size_t pixels = 1 * out_x * out_y;
     const size_t start_p = pixels * idx / threads;
     const size_t end_p = pixels * (idx + 1) / threads;
 
-    main_enum(args->mode, args->sx, args->sy, in_w, in_h, out_x, out_y, in_buf, out_buf, start_p, end_p);
+    main_enum(args->mode, args->sx, args->sy, in_shape[1], in_shape[0], out_x, out_y, in_buf, out_buf, start_p, end_p);
 
 
     return 0;
 }
 
-
-SHARED int f0(args_t* args, uint8_t *in_buf, uint8_t *out_buf, size_t in_t, size_t in_h, size_t in_w){
+SHARED int f0(args_t* args, uint8_t *in_buf, uint8_t *out_buf, size_t in_shape[2]){
     // 单线程缩放
-    size_t out_x = round5(in_w * args->sx);
-    size_t out_y = round5(in_h * args->sy);
+    const size_t out_x = round5(in_shape[1] * args->sx);
+    const size_t out_y = round5(in_shape[0] * args->sy);
 
-    main_enum(args->mode, args->sx, args->sy, in_w, in_h, out_x, out_y, in_buf, out_buf, 0, out_x * out_y);
+    main_enum(args->mode, args->sx, args->sy, in_shape[1], in_shape[0], out_x, out_y, in_buf, out_buf, 0, out_x * out_y);
 
     return 0;
 }
