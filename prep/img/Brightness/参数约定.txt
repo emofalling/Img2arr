@@ -1,0 +1,8 @@
+[pack]struct{
+    bool op; //符号位。0表示加val，1表示减val
+    uint8_t val; //要增加或减少的值
+    bool opR; //是否对R通道生效。如果不生效，则直接传输原图像的R通道
+    bool opG; //同上，针对G通道
+    bool opB; //同上，针对B通道
+    bool opA; //同上，针对A通道
+}

@@ -1,0 +1,12 @@
+[pack]struct{
+    uint64_t [out]R[256]; // 直方图求和结果：R
+    uint64_t [out]G[256]; // 直方图求和结果：G
+    uint64_t [out]B[256]; // 直方图求和结果：B
+    uint64_t [out]A[256]; // 直方图求和结果：A
+}对于单线程
+[pack]struct{
+    uint64_t [out]R[256 * thread]; // 每个任务的直方图求和结果：R
+    uint64_t [out]G[256 * thread]; // 每个任务的直方图求和结果：G
+    uint64_t [out]B[256 * thread]; // 每个任务的直方图求和结果：B
+    uint64_t [out]A[256 * thread]; // 每个任务的直方图求和结果：A
+}对于多线程

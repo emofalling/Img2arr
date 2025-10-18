@@ -1,0 +1,10 @@
+[pack]struct{
+    float sx; // x方向缩放比例
+    float sy; // y方向缩放比例
+    int enum{
+        NEAREST = 0, // 最近邻插值
+        BILINEAR = 1, // 双线性插值
+        BICUBIC = 2, // 双三次插值
+        LANCZOS = 3, // Lanczos插值
+    };
+}
