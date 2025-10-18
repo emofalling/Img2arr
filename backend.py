@@ -296,6 +296,15 @@ def _load_exts_cdll(file: str, regname_prefix: str) -> CDLL:
     if hasattr(cdll, "f1"):
         cdll.f1.restype = c_int
         cdll.f1.argtypes = [c_size_t, c_size_t, c_void_p, POINTER(c_uint8), POINTER(c_uint8), POINTER(c_size_t)]
+    if hasattr(cdll, "init"):
+        # 初始化函数，启动时调用
+        # int init(void)
+        cdll.init.restype = c_int
+        cdll.init.argtypes = []
+        print("init()")
+        ret = cdll.init()
+        if ret != 0:
+            raise RuntimeError(f"init() return {ret}")
     return cdll
 
 def _load_exts_ctlext(file: str, cdll: CDLL) -> ModuleType:
@@ -622,7 +631,7 @@ class Pre_iter:
         else: 
             outbuf_ptr = out_buf.arrptr
         # 获取输入的shape
-        in_shape = in_buf.arr.shape
+        in_shape = in_buf.arr.shape[:-1]
         in_shape_ct = (c_size_t * len(in_shape))(*in_shape)
         # 加载extdc的对应dll
         dll = self.extdc[EXT_TYPE_PREP]["img"][name][EXT_OP_CDLL]
@@ -632,7 +641,6 @@ class Pre_iter:
         if hasattr(dll, "f1"):
             # 准备返回值列表，默认值全是114514
             ret_list = zeros(threads, dtype=intc)
-            ret_list[:] = 114514
             # 多核
             ret = PlProcCore.MultiCore(bytes(name, "utf-8"), dll.f1, args, ret_list.ctypes.data_as(POINTER(c_int)), 
                                        inbuf_ptr, outbuf_ptr, in_shape_ct)

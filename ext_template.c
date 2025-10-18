@@ -10,6 +10,7 @@
 // SHARED: This function is exported
 #if defined(_WIN32) || defined(_WIN64)
 #define SHARED __declspec(dllexport)
+#define SUPPORT_DLLENTRY
 #else
 #define SHARED __attribute__((visibility("default")))
 #endif
@@ -39,26 +40,38 @@ enum ExtAttr{
 
 };
 
-// ext.py传入的参数解析结构体。
-// The parameter parsing structure passed in by ext.py.
+/**
+ * @brief 初始化函数。当扩展被加载时，会被调用一次，在重新加载前不会再次调用。
+ * This function is called once when the extension is loaded, and it will not be called again before reloading.
+ * @return 错误码，0表示成功，非0表示失败。若函数无返回，则默认返回0。
+ * Error code, 0 means success, non-0 means failure. If the function has no return, it defaults to return 0.
+ * @note 没有此函数并不会导致扩展加载失败，只是无法自定义初始化。
+ * @note No such function will not cause the extension to fail to load, but it cannot be customized to initialize.
+ */
+SHARED int init(void){
+    // Implement here. If no return, equal to return 0.
+}
+
+// ext.py传入的参数解析结构体。可以作为处理结果输出。
+// The parameter parsing structure passed in by ext.py. It can be used as the output of the processing result.
 typedef struct {
-    // 这里填写输出的参数列表
+    // 这里填写参数列表
     // Fill in the output parameter list here
 }__attribute__((packed)) args_t;
 
 /**
  * @brief 获取输出数据信息。在调用`f0`或`f1`之前会被调用以确认输出缓冲区大小及其属性.
  * Get output data information. It will be called before calling `f0` or `f1` to confirm the size and attributes of the output buffer.
- * @param args 参数解析结构体。
+ * @param args[in/out] 参数解析结构体。
  * Parameter parsing structure.
- * @param in_shape 输入缓冲区形状。对于`img`类扩展，其值为[height, width].
+ * @param in_shape[in] 输入缓冲区形状。对于`img`类扩展，其值为[height, width].
  * For `img` class extensions, its value is [height, width].
  * @param out_shape[out] 输出缓冲区形状。对于`img`类扩展，其值为[height, width].
  * For `img` class extensions, its value is [height, width].
  * @param attr[out] 扩展属性，应是`ExtAttr`中的某个值。用于为管线进行特化提示，以进行优化。若不赋值，则默认为`ATTR_NONE`。
  * Extension attribute, should be a value in `ExtAttr`. Used to specialize the pipeline for optimization. If not assigned, the default is `ATTR_NONE`.
- * @return 错误码，0表示成功，非0表示失败。若函数无返回，则默认返回0。
- * Error code, 0 means success, non-0 means failure. If the function has no return, it defaults to return 0.
+ * @return 错误码，0表示成功，非0表示失败。若函数无返回，则返回随机值，容易导致错误。
+ * Error code, 0 means success, non-0 means failure. If the function has no return, it returns a random value, which is easy to cause errors.
  */
 SHARED int io_GetOutInfo(args_t* args, size_t in_shape[ ], size_t out_shape[ ], int* attr){
     // 指定输出的尺寸及其属性
@@ -74,13 +87,13 @@ SHARED int io_GetOutInfo(args_t* args, size_t in_shape[ ], size_t out_shape[ ], 
 /**
  * @brief 单线程实现。
  * Single-threaded implementation.
- * @param args 参数解析结构体。
+ * @param args[in/out] 参数解析结构体。
  * Parameter parsing structure.
- * @param in_buf 输入缓冲区，格式为`[*in_shape, 4]`。
+ * @param in_buf[in] 输入缓冲区，格式为`[*in_shape, 4]`。
  * Input buffer, format is `[*in_shape, 4]`.
- * @param out_buf 输出缓冲区。大小由`io_GetOutInfo`指定。
+ * @param out_buf[out] 输出缓冲区。大小由`io_GetOutInfo`指定。
  * Output buffer. The size is specified by `io_GetOutInfo`.
- * @param in_shape 输入缓冲区形状。对于`img`类扩展，其值为[height, width].
+ * @param in_shape[in] 输入缓冲区形状。对于`img`类扩展，其值为[height, width].
  * For `img` class extensions, its value is [height, width].
  * @return 错误码，0表示成功，非0表示失败。若函数无返回，则默认返回0。
  * Error code, 0 means success, non-0 means failure. If the function has no return, it defaults to return 0.
@@ -92,17 +105,17 @@ SHARED int f0(args_t* args, uint8_t* in_buf, uint8_t* out_buf, size_t in_shape[ 
 /**
  * @brief 多线程实现。
  * Multi-threaded implementation.
- * @param threads 任务数。
+ * @param threads[in] 任务数。
  * Number of tasks.
- * @param idx 任务索引。
+ * @param idx[in] 任务索引。
  * Task index.
- * @param args 参数解析结构体。
+ * @param args[in/out] 参数解析结构体。
  * Parameter parsing structure.
- * @param in_buf 输入缓冲区，格式为`[*in_shape, 4]`。
+ * @param in_buf[in] 输入缓冲区，格式为`[*in_shape, 4]`。
  * Input buffer, format is `[*in_shape, 4]`.
- * @param out_buf 输出缓冲区。大小由`io_GetOutInfo`指定。
+ * @param out_buf[out] 输出缓冲区。大小由`io_GetOutInfo`指定。
  * Output buffer. The size is specified by `io_GetOutInfo`.
- * @param in_shape 输入缓冲区形状。对于`img`类扩展，其值为[height, width].
+ * @param in_shape[in] 输入缓冲区形状。对于`img`类扩展，其值为[height, width].
  * For `img` class extensions, its value is [height, width].
  * @return 错误码，0表示成功，非0表示失败。若函数无返回，则默认返回0。
  * Error code, 0 means success, non-0 means failure. If the function has no return, it defaults to return 0.
