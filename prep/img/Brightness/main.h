@@ -17,8 +17,10 @@ typedef struct {
 typedef int (*f0_func_t)(args_t* args, uint8_t* in_buf, uint8_t* out_buf, size_t in_shape[2]);
 typedef int (*f1_func_t)(size_t threads, size_t idx, args_t* args, uint8_t* in_buf, uint8_t* out_buf, size_t in_shape[2]);
 
+int f0_avx512(args_t* args, uint8_t* in_buf, uint8_t* out_buf, size_t in_shape[2]);
 int f0_avx2(args_t* args, uint8_t* in_buf, uint8_t* out_buf, size_t in_shape[2]);
 int f0_sse2(args_t* args, uint8_t* in_buf, uint8_t* out_buf, size_t in_shape[2]);
+int f1_avx512(size_t threads, size_t idx, args_t * args, uint8_t* in_buf, uint8_t* out_buf, size_t in_shape[2]);
 int f1_avx2(size_t threads, size_t idx, args_t * args, uint8_t* in_buf, uint8_t* out_buf, size_t in_shape[2]);
 int f1_sse2(size_t threads, size_t idx, args_t * args, uint8_t* in_buf, uint8_t* out_buf, size_t in_shape[2]);
 

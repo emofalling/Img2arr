@@ -39,6 +39,15 @@ f1_func_t f1_func = f1_default; // 扩展函数指针。默认值为f1（最原�
  */
 SHARED int init(void){
     __builtin_cpu_init(); // 初始化CPU检测
+    // 如果开启AVX512宏开关，则优先使用AVX512指令集
+    if(__builtin_cpu_supports("avx512bw")){// 使用AVX-512实现
+        #ifdef EXT_ENABLE_AVX512
+        #warning "AVX512 Mode Active: On Intel 13th/14th Gen CPUs, sustained AVX512 usage may cause elevated temperatures and frequency reduction to manage thermal conditions."
+        f0_func = f0_avx512;
+        f1_func = f1_avx512;
+        printf("Using AVX512\n");
+        #endif
+    }
     // 优先使用AVX-2指令集
     if(__builtin_cpu_supports("avx2")){// 使用AVX-2实现
         f0_func = f0_avx2;
