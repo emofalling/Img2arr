@@ -428,10 +428,10 @@ class PageMain(QWidget):
         self.pre_out = QWidget()
         # 创建扩展列表区域
         self.pre_args = QWidget()
-        self.cvt_args = QWidget()
-        self.cvt_out = QWidget()
+        self.code_args = QWidget()
+        self.code_out = QWidget()
         self.out_arg = QWidget()
-        self.frames = [self.base_out, self.pre_args, self.pre_out, self.cvt_args, self.cvt_out, self.out_arg]
+        self.frames = [self.base_out, self.pre_args, self.pre_out, self.code_args, self.code_out, self.out_arg]
         # 设置属性
         for f in self.frames:
             f.setMinimumSize(10, 10)  # 设置最小尺寸防止自动收缩
@@ -442,6 +442,7 @@ class PageMain(QWidget):
         self.init_base_out()
         self.init_pre_args()
         self.init_pre_out()
+        self.init_code_args()
 
         # 竖分割线
         self.splitter_major = QSplitter(Qt.Orientation.Horizontal)
@@ -457,8 +458,8 @@ class PageMain(QWidget):
         self.splitter_minor1.addWidget(self.base_out)
         self.splitter_minor1.addWidget(self.pre_args)
         self.splitter_minor2.addWidget(self.pre_out)
-        self.splitter_minor2.addWidget(self.cvt_args)
-        self.splitter_minor3.addWidget(self.cvt_out)
+        self.splitter_minor2.addWidget(self.code_args)
+        self.splitter_minor3.addWidget(self.code_out)
         self.splitter_minor3.addWidget(self.out_arg)
         # 将主分割线添加到布局管理器中
         self.main_layout.addWidget(self.splitter_major)
@@ -529,7 +530,14 @@ class PageMain(QWidget):
         self.pre_args_add = QPushButton("添加预处理器")
         self.pre_args_main_layout.addWidget(self.pre_args_add)
         # self.pre_args_layout.addWidget(self.pre_args_add)
-        self.pre_args_add.clicked.connect(lambda: self_ref() and self_ref().ui_add_preProcessor())
+        # 选择预处理器
+        def addPreProcessor():
+            self = self_ref()
+            if self is None: return
+            name = self.ui_select_Processor(backend.EXT_TYPE_PREP, "img")
+            if name is not None:
+                self.AddPreProcessor(name)
+        self.pre_args_add.clicked.connect(addPreProcessor)
         # 底部弹簧
         self.pre_args_main_layout.addStretch(1)
         # 预处理器线程
@@ -555,10 +563,51 @@ class PageMain(QWidget):
         self.pre_out_layout.setContentsMargins(0, 0, 0, 0)
         self.pre_out.setLayout(self.pre_out_layout)
         self.pre_out_layout.addWidget(self.pre_out_viewer)
+    
+    def init_code_args(self):
+        self_ref = weakref.ref(self)
+
+        self.code_args_layout = QVBoxLayout()
+        self.code_args.setLayout(self.code_args_layout)
+        # 顶部wdg
+        self.code_top_widget = QWidget()
+        # self.code_top_widget.setContentsMargins(0, 0, 0, 0)
+        self.code_args_layout.addWidget(self.code_top_widget)
+        # 顶部布局
+        self.code_top_layout = QHBoxLayout()
+        self.code_top_layout.setContentsMargins(0, 0, 0, 0)
+        self.code_top_widget.setLayout(self.code_top_layout)
+        # 提示文本
+        self.code_top_layout.addWidget(QLabel("编码："), alignment=Qt.AlignmentFlag.AlignLeft)
+        self.code_main_text = QLabel("--")
+        self.code_top_layout.addWidget(self.code_main_text, alignment=Qt.AlignmentFlag.AlignCenter)
+        self.code_select_button = QPushButton("选择")
+        # 设置宽度为文字宽度
+        self.code_select_button.setFixedWidth(self.code_select_button.fontMetrics().boundingRect("选择").width() + 10)
+        self.code_top_layout.addWidget(self.code_select_button, alignment=Qt.AlignmentFlag.AlignRight)
+
+        # 选择编码器
+        def selectCode():
+            self = self_ref()
+            if self is None: return
+            name = self.ui_select_Processor(backend.EXT_TYPE_CODE, "img")
+            if name is not None:
+                # self.SelectCode(name) # 尚未实现
+                pass
+        self.code_select_button.clicked.connect(selectCode)
+
+
+        # 主要布局
+        self.code_args_main = QWidget()
+        self.code_args_main.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        self.code_args_layout.addWidget(self.code_args_main)
+
+
+
 
         
-    def ui_add_preProcessor(self):
-        """按钮回调：添加预处理器"""
+    def ui_select_Processor(self, stage: int, type: str) -> str | None:
+        """选择某个阶段的处理器，返回str或None."""
         # 创建顶层窗口
         dialog = QDialog(self.win)
         dialog.setWindowTitle("添加预处理器")
@@ -597,7 +646,7 @@ class PageMain(QWidget):
         pre_author: list[str] = []
         # 按照索引顺序存储版本。None表示没有版本
         pre_version: list[str] = []
-        for k, v in self.pipe.extdc[backend.EXT_TYPE_PREP]["img"].items():
+        for k, v in self.pipe.extdc[stage][type].items():
             pre_names.append(k)
             info = v[backend.EXT_OP_INFO]
             pre_list.append(info["name"])
@@ -642,13 +691,12 @@ class PageMain(QWidget):
         # 显示并获取结果
         eo = dialog.exec()
         if eo != QDialog.DialogCode.Accepted:
-            return
+            return None
         # 获取选择的索引
         index = pre_args_list.currentRow()
         # 获取扩展文件夹名
         name = pre_names[index]
-        print("添加预处理器", name)
-        self.AddPreProcessor(name)
+        return name
 
     def AddPreProcessor(self, name: str):
         """添加预处理器"""

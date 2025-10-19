@@ -17,7 +17,7 @@
 
 // 签名: 验证扩展是否加载正确
 // Sign: Verify that the extension is loaded correctly
-SHARED const char img2arr_ext_sign[] = "img2arr.<stage>.<type>.<name>";
+SHARED const char img2arr_ext_sign[] = "img2arr.code.img.RGB";
 
 // 扩展属性enum。用于为管线进行特化提示，以进行优化。仅预处理阶段使用。
 // Extension attribute enum. Used to specialize the pipeline for optimization. Only used in the preprocessing stage.
@@ -49,7 +49,7 @@ enum ExtAttr{
  * @note No such function will not cause the extension to fail to load, but it cannot be customized to initialize.
  */
 SHARED int init(void){
-    // Implement here. If no return, equal to return 0.
+    return 0;
 }
 
 // ext.py传入的参数解析结构体。可以作为处理结果输出。
@@ -73,14 +73,13 @@ typedef struct {
  * @return 错误码，0表示成功，非0表示失败。若函数无返回，则返回随机值，容易导致错误。
  * Error code, 0 means success, non-0 means failure. If the function has no return, it returns a random value, which is easy to cause errors.
  */
-SHARED int io_GetOutInfo(args_t* args, size_t in_shape[ ], size_t out_shape[ ], int* attr){
+SHARED int io_GetOutInfo(args_t* args, size_t in_shape[2], size_t out_shape[1], int* attr){
     // 指定输出的尺寸及其属性
     // Specify the size and attributes of the output
-    // const size_t height = in_shape[0];
-    // const size_t width = in_shape[1];
-    // out_shape[0] = height;
-    // out_shape[1] = width;
-    // *attr = ATTR_NONE;
+    const size_t height = in_shape[0];
+    const size_t width = in_shape[1];
+    out_shape[0] = height * width * 3;
+    return 0;
     // Other Implement here. If no return, equal to return 0.
 }
 
@@ -96,15 +95,13 @@ SHARED int io_GetOutInfo(args_t* args, size_t in_shape[ ], size_t out_shape[ ], 
  * @return 错误码，0表示成功，非0表示失败。若函数无返回，则返回随机值，容易导致错误。
  * Error code, 0 means success, non-0 means failure. If the function has no return, it returns a random value, which is easy to cause errors.
  */
-SHARED int io_GetViewOutInfo(args_t* args, size_t in_shape[ ], size_t out_shape[ ]){
+SHARED int io_GetViewOutInfo(args_t* args, size_t in_shape[2], size_t out_shape[2]){
     // 指定输出的尺寸及其属性
     // Specify the size and attributes of the output
-    // const size_t height = in_shape[0];
-    // const size_t width = in_shape[1];
-    // out_shape[0] = height;
-    // out_shape[1] = width;
-    // *attr = ATTR_NONE;
+    out_shape[0] = in_shape[0];
+    out_shape[1] = in_shape[1];
     // Other Implement here. If no return, equal to return 0.
+    return 0;
 }
 
 /**
@@ -122,7 +119,11 @@ SHARED int io_GetViewOutInfo(args_t* args, size_t in_shape[ ], size_t out_shape[
  * Error code, 0 means success, non-0 means failure. If the function has no return, it defaults to return 0.
  */
 SHARED int f0(args_t* args, uint8_t* in_buf, uint8_t* out_buf, size_t in_shape[ ]){
-    // Implement here. If no return, equal to return 0.
+    for(size_t i = 0, o = 0; i < in_shape[0] * in_shape[1]; i+=4, o+=3){
+        out_buf[o] = in_buf[i];
+        out_buf[o+1] = in_buf[i+1];
+        out_buf[o+2] = in_buf[i+2];
+    }
 }
 
 /**
@@ -147,9 +148,14 @@ SHARED int f1(size_t threads, size_t idx, args_t* args, uint8_t* in_buf, uint8_t
     // 计算该线程处理的像素点范围。如果需要特殊需求，请自行修改。
     // Calculate the pixel range processed by this thread. If you need special requirements, please modify it yourself.
     const size_t size = in_shape[0] * in_shape[1];
-    const size_t start_i = (size * idx / threads) * 4;
-    const size_t end_i = (size * (idx + 1) / threads) * 4;
-    // Implement here. If no return, equal to return 0.
+    const size_t start = size * idx / threads;
+    const size_t end = size * (idx + 1) / threads;
+    for(size_t i = start * 4, o = start * 3; i < end * 4; i+=4, o+=3){
+        out_buf[o] = in_buf[i];
+        out_buf[o+1] = in_buf[i+1];
+        out_buf[o+2] = in_buf[i+2];
+    }
+
 }
 
 /**
@@ -167,7 +173,12 @@ SHARED int f1(size_t threads, size_t idx, args_t* args, uint8_t* in_buf, uint8_t
  * Error code, 0 means success, non-0 means failure. If the function has no return, it defaults to return 0.
  */
 SHARED int f0p(args_t* args, uint8_t* in_buf, uint8_t* out_buf, size_t in_shape[ ]){
-    // Implement here. If no return, equal to return 0.
+    for(size_t i = 0; i < in_shape[0] * in_shape[1]; i+=4){
+        out_buf[i] = in_buf[i];
+        out_buf[i+1] = in_buf[i+1];
+        out_buf[i+2] = in_buf[i+2];
+        out_buf[i+3] = 255;
+    }
 }
 
 /**
@@ -194,7 +205,12 @@ SHARED int f1p(size_t threads, size_t idx, args_t* args, uint8_t* in_buf, uint8_
     const size_t size = in_shape[0] * in_shape[1];
     const size_t start_i = (size * idx / threads) * 4;
     const size_t end_i = (size * (idx + 1) / threads) * 4;
-    // Implement here. If no return, equal to return 0.
+    for(size_t i = start_i; i < end_i; i+=4){
+        out_buf[i] = in_buf[i];
+        out_buf[i+1] = in_buf[i+1];
+        out_buf[i+2] = in_buf[i+2];
+        out_buf[i+3] = 255;
+    }
 }
 
 /*

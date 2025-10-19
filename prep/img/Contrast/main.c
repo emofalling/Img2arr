@@ -35,7 +35,7 @@ SHARED int io_GetOutInfo(void* args, size_t in_shape[2], size_t out_shape[2], in
 }
 */
 
-typedef struct{
+typedef struct {
     bool useint;
     uint16_t contrast;
     uint8_t centgray;

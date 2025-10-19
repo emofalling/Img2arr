@@ -58,8 +58,8 @@ if sys.version_info >= (3, 8) and hasattr(os, "add_dll_directory"):
 ext_index_name_map = {
     0: "open",
     1: "prep",
-    2: "cvt" ,
-    3: "code",
+    2: "code" ,
+    3: "out",
 }
 
 # 获取CPU系统（小写）
@@ -139,8 +139,8 @@ def load_module_from_path(file_path, module_name):
 
 EXT_TYPE_OPEN = 0
 EXT_TYPE_PREP = 1
-EXT_TYPE_CVT = 2
-EXT_TYPE_CODE = 3
+EXT_TYPE_CODE = 2
+EXT_TYPE_OUT = 3
 
 EXT_TYPE_NUMS = 4
 
