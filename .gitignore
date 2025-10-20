@@ -158,3 +158,6 @@ cython_debug/
 
 # on Custom compiler
 .hash
+
+# setting.json
+setting.json

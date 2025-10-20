@@ -161,7 +161,11 @@ class WinMain(QObject):
         # 设置窗体大小
         geometry = GetSet("WinGeometry")
         if geometry:
-            self.win.setGeometry(*geometry)
+            # 如果是(-1, -1, -4, -5),表示最大化
+            if geometry == [-1, -1, -4, -5]:
+                self.win.showMaximized()
+            else:
+                self.win.setGeometry(*geometry)
 
     def setstyle(self):
         """设置统一样式"""
@@ -391,7 +395,12 @@ class WinMain(QObject):
         """当窗口关闭时，要执行的函数。在别的线程中执行"""
         # 保存当前窗口的位置
         geometry = self.win.geometry()
-        SetSet("WinGeometry", [geometry.x(), geometry.y(), geometry.width(), geometry.height()])
+        if self.win.isMaximized():
+            # 最大化，保存(-1, -1, -4, -5)
+            SetSet("WinGeometry", [-1, -1, -4, -5])
+        else: #保存位置和大小
+            SetSet("WinGeometry", [geometry.x(), geometry.y(), geometry.width(), geometry.height()])
+
         # 关闭Backend
         backend.Close()
         pass
@@ -404,6 +413,7 @@ class PageMain(QWidget):
         self.win = win
         # self.pipe = backend.Img2arrPIPE(file, ext)
         self.pipe = pipe
+
         self.pre_list: list[PreProcessor] = []
         self.update_notify = Condition()
         self.update_index: int | None = None # 线程更新时的索引。None表示更新完毕。
@@ -413,8 +423,9 @@ class PageMain(QWidget):
             self = self_ref()
             if self is None: return
             self.update_pre_out_viewer(update_preout, t, resized)
-            
         self.pre_out_viewer_updateSignal.signal.connect(connectfunc, Qt.ConnectionType.AutoConnection)
+
+        self.code_name = ""
 
         self.main()
     def main(self):
@@ -443,6 +454,7 @@ class PageMain(QWidget):
         self.init_pre_args()
         self.init_pre_out()
         self.init_code_args()
+        self.init_code_out()
 
         # 竖分割线
         self.splitter_major = QSplitter(Qt.Orientation.Horizontal)
@@ -571,7 +583,7 @@ class PageMain(QWidget):
         self.code_args.setLayout(self.code_args_layout)
         # 顶部wdg
         self.code_top_widget = QWidget()
-        # self.code_top_widget.setContentsMargins(0, 0, 0, 0)
+        self.code_top_widget.setContentsMargins(0, 0, 0, 0)
         self.code_args_layout.addWidget(self.code_top_widget)
         # 顶部布局
         self.code_top_layout = QHBoxLayout()
@@ -582,8 +594,10 @@ class PageMain(QWidget):
         self.code_main_text = QLabel("--")
         self.code_top_layout.addWidget(self.code_main_text, alignment=Qt.AlignmentFlag.AlignCenter)
         self.code_select_button = QPushButton("选择")
-        # 设置宽度为文字宽度
-        self.code_select_button.setFixedWidth(self.code_select_button.fontMetrics().boundingRect("选择").width() + 10)
+        # 设置宽度为文字宽度，高度为文字高度
+        rect = self.code_select_button.fontMetrics().boundingRect("选择")
+        self.code_select_button.setFixedWidth(rect.width() + 10)
+        # self.code_select_button.setFixedHeight(rect.height())
         self.code_top_layout.addWidget(self.code_select_button, alignment=Qt.AlignmentFlag.AlignRight)
 
         # 选择编码器
@@ -592,15 +606,47 @@ class PageMain(QWidget):
             if self is None: return
             name = self.ui_select_Processor(backend.EXT_TYPE_CODE, "img")
             if name is not None:
-                # self.SelectCode(name) # 尚未实现
-                pass
+                self.SelectCode(name)
         self.code_select_button.clicked.connect(selectCode)
 
 
-        # 主要布局
-        self.code_args_main = QWidget()
-        self.code_args_main.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-        self.code_args_layout.addWidget(self.code_args_main)
+        # 主要布局，将通过更换QWidget的方式来实现控制台更换显示
+        self.code_args_scrollarea = QScrollArea()
+        # 设置基本属性
+        self.code_args_scrollarea.setWidgetResizable(True)
+        # self.code_args_scrollarea.setFrameShape(QFrame.Shape.NoFrame) # 无边框
+        self.code_args_scrollarea.setContentsMargins(0, 0, 0, 0)
+        self.code_args_scrollarea.setBackgroundRole(QPalette.ColorRole.Base)
+        # 确保背景色生效
+        self.code_args_scrollarea.setAutoFillBackground(True)
+        # 有垂直滚动条和水平滚动条
+        self.code_args_scrollarea.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.code_args_scrollarea.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.code_args_scrollarea.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        self.code_args_layout.addWidget(self.code_args_scrollarea)
+        # 内部默认Widget（显示文本）
+        self.code_args_default = QWidget()
+        self.code_args_default.setContentsMargins(0, 0, 0, 0)
+        self.code_args_default.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
+        self.code_args_scrollarea.setWidget(self.code_args_default)
+        self.code_args_default_layout = QVBoxLayout()
+        self.code_args_default_layout.setContentsMargins(0, 0, 0, 0)
+        # 灰色文本
+        self.code_args_default_text = QLabel("请选择一个编码器以显示控制台")
+        self.code_args_default_text.setStyleSheet("color: gray;")
+        # 上层空余空间 20%, 下层空余空间 80%
+        self.code_args_default_layout.addStretch(2)
+        self.code_args_default_layout.addWidget(self.code_args_default_text, alignment=Qt.AlignmentFlag.AlignCenter)
+        self.code_args_default_layout.addStretch(8)
+        # 默认文本
+        self.code_args_default.setLayout(self.code_args_default_layout)
+    
+    def init_code_out(self):
+        self.code_out_viewer = CustomUI.GenerelPicViewer(self.pipe.code_view, "编码")
+        self.code_out_layout = QVBoxLayout()
+        self.code_out_layout.setContentsMargins(0, 0, 0, 0)
+        self.code_out.setLayout(self.code_out_layout)
+        self.code_out_layout.addWidget(self.code_out_viewer)
 
 
 
@@ -708,7 +754,6 @@ class PageMain(QWidget):
         ext = self.pipe.extdc[backend.EXT_TYPE_PREP]["img"][name]
         # 获取name
         main_name = ext[backend.EXT_OP_INFO]["name"]
-        # 获取py部分
 
         # 获取Python部分
         py_base = ext[backend.EXT_OP_EXT]
@@ -767,9 +812,7 @@ class PageMain(QWidget):
             # text.setStyleSheet("background-color: red;")
         # 更新
         self.Pre_Update(max(len(self.pre_list) - 2, 0))
-
-
-            
+ 
     def Pre_FindIndex(self, pre: "PreProcessor"):
         """获取预处理项的索引。失败返回-1"""
         # return self.pre_list.index(pre) # 不可以！！！
@@ -869,6 +912,9 @@ class PageMain(QWidget):
             mem_size += buf.arr.nbytes
         autofmt_memsize, autofmt_memsize_unit = AutoFmtSize(mem_size)
         self.pre_top_widget.setToolTip(f"计算耗时：{t_str}\n更新耗时：{AutoFmtTime(time_update_end - time_update_start)}\n中间缓冲区：{mid_buf_len} 个, {autofmt_memsize:.2f} {autofmt_memsize_unit}")
+        # 未来会删
+        self.UpdateCodeView()
+
 
     def Pre_Delete(self, index: int):
         """删除预处理器"""
@@ -937,6 +983,53 @@ class PageMain(QWidget):
                     continue
         return it.pre_resized
     
+    def SelectCode(self, name: str):
+        """选择编码器"""
+        
+        
+        # 获取name对应的列表
+        ext = self.pipe.extdc[backend.EXT_TYPE_CODE]["img"][name]
+        # 获取name
+        main_name = ext[backend.EXT_OP_INFO]["name"]
+        # 尝试获取Python部分
+        py_base = ext[backend.EXT_OP_EXT]
+        # 加载Python部分
+
+        err_cause = ""
+
+        if py_base is not None:
+            ... # 尚未实现
+        else:
+            err_cause = "没有控制台"
+        # 更新文本
+        self.code_main_text.setText(main_name)
+        # 移除现有的QWidget，若不是code_args_default，则删除
+        wdg = self.code_args_scrollarea.takeWidget()
+        if wdg != self.code_args_default:
+            wdg.deleteLater()
+        # 如果err_cause不为空，则显示错误信息
+        if err_cause:
+            self.code_args_default_text.setText(err_cause)
+            self.code_args_scrollarea.setWidget(self.code_args_default)
+        
+        # 设置self.code_name
+        self.code_name = name
+        # 更新编码输出
+        self.UpdateCodeView()
+
+    def UpdateCodeView(self):
+        """更新编码输出。目前仅有单线程实现，未来升级"""
+        _, update_arr = self.pipe.CodeView(self.code_name, backend.NULL, 0)
+        if update_arr:
+            self.code_out_viewer.update_arr(self.pipe.code_view)
+        else:
+            self.code_out_viewer.update()
+
+
+
+
+        
+
     def deleteLater(self):
         """清理回调"""
         print("主页面清理")
