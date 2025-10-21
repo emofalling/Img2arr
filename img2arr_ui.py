@@ -50,10 +50,10 @@ ENCODING = "utf-8"
 
 pipe_update_mode = backend.PRE_PIPE_MODES.PIPE_MODE_DEFAULT
 
-# 实时刷新。对于一切预处理的更新，都刷新其界面。
+# 实时刷新。对于一切预览的更新，都刷新其界面。
 # True表示启用实时刷新，此时无论怎么操作，界面都会实时更新。
 # False表示禁用实时刷新，仅当最后一次操作完成后，界面才会更新。
-pre_realtime_update = False
+view_realtime_update = False
 
 defaultSetting = {
     "LastOpenDir": "",
@@ -413,19 +413,29 @@ class PageMain(QWidget):
         self.win = win
         # self.pipe = backend.Img2arrPIPE(file, ext)
         self.pipe = pipe
-
+        # 预处理项列表
         self.pre_list: list[PreProcessor] = []
-        self.update_notify = Condition()
-        self.update_index: int | None = None # 线程更新时的索引。None表示更新完毕。
-        self.pre_out_viewer_updateSignal = Signals.SignalTuple()
-        def connectfunc(args: tuple[bool, float, bool]):
-            update_preout, t, resized = args
-            self = self_ref()
-            if self is None: return
-            self.update_pre_out_viewer(update_preout, t, resized)
-        self.pre_out_viewer_updateSignal.signal.connect(connectfunc, Qt.ConnectionType.AutoConnection)
-
+        # 预处理刷新条件变量
+        self.pre_update_notify = Condition()
+        self.pre_update_index: int | None = None # 线程更新时的索引。None表示更新完毕。
+        # 预处理输出预览更新信号
+        self.PreOutViewUpdateSignal = Signals.SignalTuple()
+        self.PreOutViewUpdateSignal.signal.connect(lambda args: self_ref() and self_ref().PreUpdateOutViewer(*args), Qt.ConnectionType.AutoConnection)
+        # 编码器名称。空字符串表示未选择编码器
         self.code_name = ""
+        # 编码器刷新条件变量
+        self.code_update_notify = Condition()
+        self.code_is_need_update = False # 编码器是否需要更新。将在唤醒前同时将其赋值为True以表示需要更新
+        # 编码预览输出预览更新信号（不是编码输出
+        self.CodeViewerOutViewUpdateSignal = Signals.SignalTuple()
+        self.CodeViewerOutViewUpdateSignal.signal.connect(lambda args: self_ref() and self_ref().CodeUpdateOutViewer(*args), Qt.ConnectionType.AutoConnection)
+
+        # 预处理器线程
+        self.pre_args_thread = Thread(target=self.PreUpdateThread, daemon=True)
+        self.pre_args_thread.start()
+        # 编码器线程
+        self.code_args_thread = Thread(target=self.CodeUpdateThread, daemon=True)
+        self.code_args_thread.start()
 
         self.main()
     def main(self):
@@ -455,6 +465,7 @@ class PageMain(QWidget):
         self.init_pre_out()
         self.init_code_args()
         self.init_code_out()
+        self.init_out_args()
 
         # 竖分割线
         self.splitter_major = QSplitter(Qt.Orientation.Horizontal)
@@ -507,9 +518,9 @@ class PageMain(QWidget):
         title.setAlignment(Qt.AlignmentFlag.AlignLeft)
         top_layout.addWidget(title)
         # 计算时间文本
-        self.calc_time = QLabel("-- s")
-        self.calc_time.setAlignment(Qt.AlignmentFlag.AlignRight)
-        top_layout.addWidget(self.calc_time)
+        self.pre_calc_time = QLabel("-- ")
+        self.pre_calc_time.setAlignment(Qt.AlignmentFlag.AlignRight)
+        top_layout.addWidget(self.pre_calc_time)
         # 底部scrollarea
         self.pre_args_scrollarea = QScrollArea()
         self.pre_args_layout.addWidget(self.pre_args_scrollarea)
@@ -552,9 +563,6 @@ class PageMain(QWidget):
         self.pre_args_add.clicked.connect(addPreProcessor)
         # 底部弹簧
         self.pre_args_main_layout.addStretch(1)
-        # 预处理器线程
-        self.pre_args_thread = Thread(target=self.PreUpdateThread, daemon=True)
-        self.pre_args_thread.start()
 
         # 设置self.pre_top_widget右键菜单
         def top_contextMenuEvent(event: QContextMenuEvent):
@@ -592,13 +600,16 @@ class PageMain(QWidget):
         # 提示文本
         self.code_top_layout.addWidget(QLabel("编码："), alignment=Qt.AlignmentFlag.AlignLeft)
         self.code_main_text = QLabel("--")
-        self.code_top_layout.addWidget(self.code_main_text, alignment=Qt.AlignmentFlag.AlignCenter)
+        self.code_top_layout.addWidget(self.code_main_text, alignment=Qt.AlignmentFlag.AlignLeft)
         self.code_select_button = QPushButton("选择")
         # 设置宽度为文字宽度，高度为文字高度
         rect = self.code_select_button.fontMetrics().boundingRect("选择")
         self.code_select_button.setFixedWidth(rect.width() + 10)
         # self.code_select_button.setFixedHeight(rect.height())
-        self.code_top_layout.addWidget(self.code_select_button, alignment=Qt.AlignmentFlag.AlignRight)
+        self.code_top_layout.addWidget(self.code_select_button, alignment=Qt.AlignmentFlag.AlignLeft)
+        # 计算时间
+        self.code_calc_time = QLabel("-- ")
+        self.code_top_layout.addWidget(self.code_calc_time, alignment=Qt.AlignmentFlag.AlignRight)
 
         # 选择编码器
         def selectCode():
@@ -647,6 +658,19 @@ class PageMain(QWidget):
         self.code_out_layout.setContentsMargins(0, 0, 0, 0)
         self.code_out.setLayout(self.code_out_layout)
         self.code_out_layout.addWidget(self.code_out_viewer)
+    
+    def init_out_args(self):
+        self_ref = weakref.ref(self)
+        # 添加一个居中按钮：输出
+        self.out_args_layout = QVBoxLayout()
+        self.out_arg.setLayout(self.out_args_layout)
+        self.out_args_button = QPushButton("输出")
+        self.out_args_layout.addStretch(1)
+        self.out_args_layout.addWidget(self.out_args_button, alignment=Qt.AlignmentFlag.AlignCenter)
+        self.out_args_layout.addStretch(1)
+        # 点击后输出
+        self.out_args_button.clicked.connect(lambda: self_ref() and self_ref()._test_wrout())
+
 
 
 
@@ -853,17 +877,17 @@ class PageMain(QWidget):
     def PreUpdateThread(self):
         """更新预处理管线的线程"""
         while True:
-            with self.update_notify:
-                self.update_notify.wait()
-            if self.update_notify is None: # 结束
+            with self.pre_update_notify:
+                self.pre_update_notify.wait()
+            if self.pre_update_notify is None: # 结束
                 break
             resized = False # 是否需要更新输出尺寸
-            self.pre_out_viewer_updateSignal.signal.emit((False, -1, None))
-            while self.update_index is not None:
-                # 如果更新之后没有再需要更新的，此时self.update_index显然为None，自然结束
-                # 如果计算过程中拖动了，则self.update_index会再次被赋值为需要更新的index，自然触发下一次更新
-                index = self.update_index
-                self.update_index = None
+            self.PreOutViewUpdateSignal.signal.emit((False, -1, None))
+            while self.pre_update_index is not None:
+                # 如果更新之后没有再需要更新的，此时self.pre_update_index显然为None，自然结束
+                # 如果计算过程中拖动了，则self.pre_update_index会再次被赋值为需要更新的index，自然触发下一次更新
+                index = self.pre_update_index
+                self.pre_update_index = None
                 if index is None: # 以防万一
                     continue
                 time_calc_start = time.perf_counter()
@@ -873,20 +897,24 @@ class PageMain(QWidget):
                     traceback.print_exc()
                     break
                 time_calc_end = time.perf_counter()
-                if pre_realtime_update:
-                    self.pre_out_viewer_updateSignal.signal.emit((True, time_calc_end - time_calc_start, resized))
+                if view_realtime_update:
+                    self.PreOutViewUpdateSignal.signal.emit((True, time_calc_end - time_calc_start, resized))
                     resized = False # 重置，防止多次更新
             else:
                 # 成功
-                if not pre_realtime_update:
-                    self.pre_out_viewer_updateSignal.signal.emit((True, time_calc_end - time_calc_start, resized))
+                if not view_realtime_update:
+                    self.PreOutViewUpdateSignal.signal.emit((True, time_calc_end - time_calc_start, resized))
+                    # 刷新编码
+                    self.code_is_need_update = True
+                    with self.code_update_notify:
+                        self.code_update_notify.notify_all()
                 continue
             # 失败
-            if not pre_realtime_update:
-                self.pre_out_viewer_updateSignal.signal.emit((False, "错误！", None))
-        # print("End")
-    
-    def update_pre_out_viewer(self, update_view: bool, t: float | int | str, resized: bool):
+            if not view_realtime_update:
+                self.PreOutViewUpdateSignal.signal.emit((False, "错误！", None))
+        print("预处理刷新线程 结束")
+
+    def PreUpdateOutViewer(self, update_view: bool, t: float | int | str, resized: bool):
         """更新预处理输出"""
         if t == -1:
             t_str = "正在计算…"
@@ -894,7 +922,7 @@ class PageMain(QWidget):
             t_str = t
         else:
             t_str = AutoFmtTime(t)
-        self.calc_time.setText(t_str)
+        self.pre_calc_time.setText(t_str)
         # 选择更新方式
         time_update_start = time.perf_counter()
         if update_view:
@@ -912,8 +940,7 @@ class PageMain(QWidget):
             mem_size += buf.arr.nbytes
         autofmt_memsize, autofmt_memsize_unit = AutoFmtSize(mem_size)
         self.pre_top_widget.setToolTip(f"计算耗时：{t_str}\n更新耗时：{AutoFmtTime(time_update_end - time_update_start)}\n中间缓冲区：{mid_buf_len} 个, {autofmt_memsize:.2f} {autofmt_memsize_unit}")
-        # 未来会删
-        self.UpdateCodeView()
+
 
 
     def Pre_Delete(self, index: int):
@@ -936,10 +963,10 @@ class PageMain(QWidget):
 
     def Pre_Update(self, index: int = 0):
         # 设置必要的参数
-        self.update_index = index
+        self.pre_update_index = index
         # 通知线程更新
-        with self.update_notify:
-            self.update_notify.notify_all()
+        with self.pre_update_notify:
+            self.pre_update_notify.notify_all()
     def _Pre_Update(self, index: int = 0) -> bool:
         """更新预处理管线"""
         # print("Start")
@@ -1015,15 +1042,83 @@ class PageMain(QWidget):
         # 设置self.code_name
         self.code_name = name
         # 更新编码输出
-        self.UpdateCodeView()
-
-    def UpdateCodeView(self):
-        """更新编码输出。目前仅有单线程实现，未来升级"""
-        _, update_arr = self.pipe.CodeView(self.code_name, backend.NULL, 0)
-        if update_arr:
-            self.code_out_viewer.update_arr(self.pipe.code_view)
+        self.code_is_need_update = True
+        with self.code_update_notify: 
+            self.code_update_notify.notify_all()
+    
+    def CodeUpdateThread(self):
+        """更新编码输出的线程"""
+        while True:
+            with self.code_update_notify:
+                self.code_update_notify.wait()
+            if self.code_update_notify is None: # 结束
+                break
+            resized = False # 是否需要更新输出尺寸
+            self.CodeViewerOutViewUpdateSignal.signal.emit((False, -1, None))
+            while self.code_is_need_update:
+                need_update = self.code_is_need_update
+                self.code_is_need_update = False
+                if not need_update: # 以防万一
+                    continue
+                time_calc_start = time.perf_counter()
+                try:
+                    if self.code_name != "":
+                        _, new_resized = self.pipe.CodeView(self.code_name, backend.NULL, 0)
+                    else:
+                        new_resized = False
+                    resized = resized or new_resized # 任意一次需要更新尺寸，则最终需要更新
+                except:
+                    traceback.print_exc()
+                    break
+                time_calc_end = time.perf_counter()
+                if view_realtime_update:
+                    self.CodeViewerOutViewUpdateSignal.signal.emit((True, time_calc_end - time_calc_start, resized))
+                    resized = False # 重置，防止多次更新
+            else:
+                # 成功
+                if not view_realtime_update:
+                    self.CodeViewerOutViewUpdateSignal.signal.emit((True, time_calc_end - time_calc_start, resized))
+                continue
+            # 失败
+            if not view_realtime_update:
+                self.CodeViewerOutViewUpdateSignal.signal.emit((False, "错误！", None))
+        
+        print("编码刷新线程 结束")
+    
+    def CodeUpdateOutViewer(self, update_view: bool, t: float | int | str, resized: bool):
+        if t == -1:
+            t_str = "正在计算…"
+        elif isinstance(t, str):
+            t_str = t
         else:
-            self.code_out_viewer.update()
+            t_str = AutoFmtTime(t)
+        self.code_calc_time.setText(t_str)
+        # 选择更新方式
+        time_update_start = time.perf_counter()
+        if update_view:
+            if resized:
+                # 数组尺寸发生变化，需要重新加载
+                self.code_out_viewer.update_arr(self.pipe.code_view)
+            else:
+                self.code_out_viewer.update()
+        time_update_end = time.perf_counter()
+        # 创建提示文本
+        self.code_top_widget.setToolTip(f"计算耗时：{t_str}\n更新耗时：{AutoFmtTime(time_update_end - time_update_start)}")
+
+    def _test_wrout(self):
+
+        # 调用输出函数
+        self.pipe.Code(self.code_name, backend.NULL, 0)
+        # 转换为0xXX, 0xXX的字符串格式
+        import numpy as np
+         # 定义格式化函数
+        def format_hex(x):
+            return f'0x{x:02X}'
+        hex_arr = np.vectorize(format_hex)(self.pipe.code_out)
+        # hex_with_prefix = np.char.add('0x', hex_arr)
+
+        with open("output.txt", "w") as f:
+            f.write(", ".join(hex_arr))
 
 
 
@@ -1034,18 +1129,26 @@ class PageMain(QWidget):
         """清理回调"""
         print("主页面清理")
         # 删除线程
-        notify = self.update_notify
-        self.update_notify = None
+        notify = self.pre_update_notify
+        self.pre_update_notify = None
         with notify:
             notify.notify_all()
-        # 删除所有预处理器
+        notify = self.code_update_notify
+        self.code_update_notify = None
+        with notify:
+            notify.notify_all()
+        # 删除所有预处理器界面
         for obj in self.pre_list:
             obj.deleteLater()
+        # 删除编码器界面
+        self.code_args_scrollarea.takeWidget().deleteLater()
         # 手动删除所有图片查看器
         # self.base_out_viewer.deleteLater()
         # self.pre_out_viewer.deleteLater()
         # 断开信号
-        try: self.pre_out_viewer_updateSignal.signal.disconnect()
+        try: self.PreOutViewUpdateSignal.signal.disconnect()
+        except: pass
+        try: self.CodeViewerOutViewUpdateSignal.signal.disconnect()
         except: pass
         # 删除自身
         super().deleteLater()

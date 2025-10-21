@@ -454,6 +454,8 @@ class Img2arrPIPE:
         self.pre = self.img.copy()
         # 编码后预览图片
         self.code_view = zeros_like(self.img)
+        # 编码输出
+        self.code_out = empty((0,), dtype=uint8)
 
     def Pre(self, i: int, empty: bool = False):
         """预处理。返回一个一次性迭代器  
@@ -493,10 +495,27 @@ class Img2arrPIPE:
         result = call_processor(name, dll, args, MidBuffer(self.pre), MidBuffer(self.code_view), is_code_view=True)
         # 返回结果
         return result, view_updated
-
-
-         
-
+    def Code(self, name: str, args: c_void_p, argslen: int) -> PIPENodeResult:
+        """编码。返回处理结果"""
+        assert name != "", "编码器名称不能为空"
+        # 获取对应名称编码器的动态链接库
+        dll = self.extdc[EXT_TYPE_CODE]["img"][name][EXT_OP_CDLL]
+        # 调用io_GetOutInfo获取输出尺寸
+        out_shape_ct = (c_size_t * 1)()
+        in_shape = self.pre.shape[:-1]
+        in_shape_ct = (c_size_t * len(in_shape))(*in_shape)
+        attr = c_int(0)
+        ret = dll.io_GetOutInfo(args, in_shape_ct, out_shape_ct, byref(attr))
+        if ret != 0:
+            raise RuntimeError(f"io_GetOutInfo返回错误码{ret}")
+        # resize到输出尺寸（如果需要的话）
+        out_size = out_shape_ct[0]
+        if self.code_out.shape[0] != out_size:
+            self.code_out.resize((out_size,), refcheck=False)
+        # 调用编码器
+        result = call_processor(name, dll, args, MidBuffer(self.pre), MidBuffer(self.code_out))
+        # 返回结果
+        return result
     def resetPrePIPE(self):
         """重置预处理链"""
         self.img_pre_buf.clear()

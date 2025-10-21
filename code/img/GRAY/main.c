@@ -161,7 +161,7 @@ SHARED int f1(size_t threads, size_t idx, args_t* args, uint8_t* in_buf, uint8_t
     const size_t size = in_shape[0] * in_shape[1];
     const size_t start = size * idx / threads;
     const size_t end = size * (idx + 1) / threads;
-    for(size_t i = start * 4, o = start * 3; i < end * 4; i+=4, o+=3){
+    for(size_t i = start * 4, o = start * 1; i < end * 4; i+=4, o+=1){
         uint32_t r = in_buf[i], g = in_buf[i+1], b = in_buf[i+2];
         out_buf[o] = (uint8_t)ROUND_DIV(299 * r + 587 * g + 114 * b, 1000);
     }
