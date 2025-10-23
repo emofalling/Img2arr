@@ -53,6 +53,7 @@ pipe_update_mode = backend.PRE_PIPE_MODES.PIPE_MODE_DEFAULT
 # 实时刷新。对于一切预览的更新，都刷新其界面。
 # True表示启用实时刷新，此时无论怎么操作，界面都会实时更新。
 # False表示禁用实时刷新，仅当最后一次操作完成后，界面才会更新。
+# True时，存在内存指针溢出问题
 view_realtime_update = False
 
 defaultSetting = {
@@ -423,6 +424,8 @@ class PageMain(QWidget):
         self.PreOutViewUpdateSignal.signal.connect(lambda args: self_ref() and self_ref().PreUpdateOutViewer(*args), Qt.ConnectionType.AutoConnection)
         # 编码器名称。空字符串表示未选择编码器
         self.code_name = ""
+        # 编码器py部分。当有新的编码器被选择时，会覆盖为新的编码器py部分或None。
+        self.code_py: object | None = None
         # 编码器刷新条件变量
         self.code_update_notify = Condition()
         self.code_is_need_update = False # 编码器是否需要更新。将在唤醒前同时将其赋值为True以表示需要更新
@@ -607,6 +610,8 @@ class PageMain(QWidget):
         self.code_select_button.setFixedWidth(rect.width() + 10)
         # self.code_select_button.setFixedHeight(rect.height())
         self.code_top_layout.addWidget(self.code_select_button, alignment=Qt.AlignmentFlag.AlignLeft)
+        # 此处添加弹簧
+        self.code_top_layout.addStretch(1)
         # 计算时间
         self.code_calc_time = QLabel("-- ")
         self.code_top_layout.addWidget(self.code_calc_time, alignment=Qt.AlignmentFlag.AlignRight)
@@ -680,13 +685,13 @@ class PageMain(QWidget):
         """选择某个阶段的处理器，返回str或None."""
         # 创建顶层窗口
         dialog = QDialog(self.win)
-        dialog.setWindowTitle("添加预处理器")
+        dialog.setWindowTitle("选择处理器")
         dialog.setWindowModality(Qt.WindowModality.ApplicationModal)
         # 创建布局
         layout = QVBoxLayout()
         dialog.setLayout(layout)
         # 提示文本
-        layout.addWidget(QLabel("请选择待添加的预处理器："))
+        layout.addWidget(QLabel("请选择目标处理器："))
         # 子布局
         layout_sub = QHBoxLayout()
         layout.addLayout(layout_sub)
@@ -699,7 +704,7 @@ class PageMain(QWidget):
         # 说明
         pre_args_desc = QTextEdit()
         pre_args_desc.setReadOnly(True)
-        pre_args_desc.setPlaceholderText("选择一个预处理器以查看说明")
+        pre_args_desc.setPlaceholderText("选择一个处理器以查看说明")
         layout_sub_right.addWidget(pre_args_desc)
         # 确认和取消按钮
         dialogbox = QDialogButtonBox(QDialogButtonBox.StandardButton.Cancel)
@@ -782,8 +787,8 @@ class PageMain(QWidget):
         # 获取Python部分
         py_base = ext[backend.EXT_OP_EXT]
         print(type(py_base))
-        if py_base is not None:
-            py = py_base.main()
+        if py_base is not None and hasattr(py_base, "UI"):
+            py = py_base.UI()
             print(type(py))
         else:
             py = None
@@ -800,7 +805,7 @@ class PageMain(QWidget):
 
         err_cause = ""
         
-        if py is not None:
+        if py is not None and hasattr(py, "ui_init"):
             # 调用ui_init。若没有此函数则认为没有UI
             try:
                 py.ui_init(ui_in, ext[backend.EXT_OP_CDLL], None)
@@ -900,6 +905,10 @@ class PageMain(QWidget):
                 if view_realtime_update:
                     self.PreOutViewUpdateSignal.signal.emit((True, time_calc_end - time_calc_start, resized))
                     resized = False # 重置，防止多次更新
+                    # 刷新编码
+                    self.code_is_need_update = True
+                    with self.code_update_notify:
+                        self.code_update_notify.notify_all()
             else:
                 # 成功
                 if not view_realtime_update:
@@ -1012,6 +1021,8 @@ class PageMain(QWidget):
     
     def SelectCode(self, name: str):
         """选择编码器"""
+
+        self_ref = weakref.ref(self)
         
         
         # 获取name对应的列表
@@ -1020,12 +1031,30 @@ class PageMain(QWidget):
         main_name = ext[backend.EXT_OP_INFO]["name"]
         # 尝试获取Python部分
         py_base = ext[backend.EXT_OP_EXT]
-        # 加载Python部分
+        if py_base is not None and hasattr(py_base, "UI"):
+            py = py_base.UI()
+        else:
+            py = None
 
         err_cause = ""
 
-        if py_base is not None:
-            ... # 尚未实现
+        if py is not None and hasattr(py, "ui_init"):
+            try:
+                # 创建QWidget，并初始化
+                new_wdg = QWidget() 
+                # 初始化UI
+                py.ui_init(new_wdg, self.pipe.extdc[backend.EXT_TYPE_CODE], None)
+                # 尝试绑定py.img2arr_notify_update
+                def update_notify():
+                    self = self_ref()
+                    assert self is not None, "PageMain 已被销毁，不能再用了，一定是代码有问题"
+                    self.code_is_need_update = True
+                    with self.code_update_notify:
+                        self.code_update_notify.notify_all()
+                py.img2arr_notify_update = update_notify
+            except:
+                traceback.print_exc()
+                err_cause = "初始化失败"
         else:
             err_cause = "没有控制台"
         # 更新文本
@@ -1034,17 +1063,41 @@ class PageMain(QWidget):
         wdg = self.code_args_scrollarea.takeWidget()
         if wdg != self.code_args_default:
             wdg.deleteLater()
-        # 如果err_cause不为空，则显示错误信息
+        # 如果err_cause不为空，则显示错误信息，且self.code_py覆盖为None
         if err_cause:
+            self.code_py = None
             self.code_args_default_text.setText(err_cause)
             self.code_args_scrollarea.setWidget(self.code_args_default)
-        
+        # 否则，换上新的wdg，并设置self.code_py为py
+        else:
+            self.code_py = py
+            self.code_args_scrollarea.setWidget(new_wdg)
+
         # 设置self.code_name
         self.code_name = name
         # 更新编码输出
         self.code_is_need_update = True
         with self.code_update_notify: 
             self.code_update_notify.notify_all()
+    
+    def _CodeViewUpdate(self):
+        """更新编码预览输出，由CodeUpdateThread调用"""
+        # 调用py，获取参数
+        if self.code_py is not None and hasattr(self.code_py, "update"):
+            args, arglen = self.code_py.update(backend.threads)
+        else:
+            args, arglen = backend.NULL, 0
+        # 调用编码预览
+        ret = self.pipe.CodeView(self.code_name, args, arglen)
+        # 调用py的update_end（如果有）
+        if self.code_py is not None and hasattr(self.code_py, "update_end"):
+            try:
+                self.code_py.update_end(args, arglen)
+            except:
+                print("编码器控制台 update_end 调用失败：")
+                traceback.print_exc()
+        return ret
+
     
     def CodeUpdateThread(self):
         """更新编码输出的线程"""
@@ -1063,11 +1116,12 @@ class PageMain(QWidget):
                 time_calc_start = time.perf_counter()
                 try:
                     if self.code_name != "":
-                        _, new_resized = self.pipe.CodeView(self.code_name, backend.NULL, 0)
+                        _, new_resized = self._CodeViewUpdate()
                     else:
                         new_resized = False
                     resized = resized or new_resized # 任意一次需要更新尺寸，则最终需要更新
                 except:
+                    print("编码预览更新失败，报错：")
                     traceback.print_exc()
                     break
                 time_calc_end = time.perf_counter()
@@ -1106,9 +1160,20 @@ class PageMain(QWidget):
         self.code_top_widget.setToolTip(f"计算耗时：{t_str}\n更新耗时：{AutoFmtTime(time_update_end - time_update_start)}")
 
     def _test_wrout(self):
-
-        # 调用输出函数
-        self.pipe.Code(self.code_name, backend.NULL, 0)
+        # 调用update
+        if self.code_py is not None and hasattr(self.code_py, "update"):
+            args, arglen = self.code_py.update(backend.threads)
+        else:
+            args, arglen = backend.NULL, 0
+        # 调用编码输出
+        self.pipe.Code(self.code_name, args, arglen)
+        # 调用py的update_end（如果有）
+        if self.code_py is not None and hasattr(self.code_py, "update_end"):
+            try:
+                self.code_py.update_end(args, arglen)
+            except:
+                print("编码器控制台 update_end 调用失败：")
+                traceback.print_exc()
         # 转换为0xXX, 0xXX的字符串格式
         import numpy as np
          # 定义格式化函数

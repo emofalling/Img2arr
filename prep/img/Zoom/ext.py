@@ -13,10 +13,10 @@ from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QPalette, QColor, QFontMetrics
 
 
-class absMain(object):
+class abcUI():
     """Main的抽象类"""
     def __init__(self):
-        """初始化代码。用处不大"""
+        """类初始化代码。用处不大"""
         ...
     def ui_init(self, widget: QWidget, ext: CDLL, save: dict | None):
         """UI初始化时的加载代码。每个独立的扩展控制台都会创建一个独立的类。
@@ -35,7 +35,6 @@ class absMain(object):
         """不需要扩展提供此函数。img2arr开头的所有函数都不需要扩展提供，而作为扩展的一个辅助功能。所有img2arr开头的函数在__init__后才会存在。
         更新提示文本。在折叠时显示粗略参数时十分重要。
         text: 要显示的文本。
-        
         该函数是线程安全的。
         """
         ...
@@ -57,7 +56,8 @@ class absMain(object):
         ...
 
 
-class main(absMain):
+
+class UI(abcUI):
     def __init__(self):
         pass
     """用于绘制自己的UI空间。需要PySide6。若没有此函数，则表示没有UI。不需要构造函数和析构函数。"""
