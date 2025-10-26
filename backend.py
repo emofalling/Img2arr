@@ -28,6 +28,10 @@ from collections import namedtuple
 
 from itertools import islice
 
+import logging
+
+logger = logging.getLogger("img2arr.backend")
+
 
 from PIL import Image # 以后会转而使用动态链接库而非PIL
 
@@ -226,7 +230,7 @@ def load_exts(loadf: Callable[[str], None], errf: Callable[[str, Exception], Non
                     # 如果EXP_OP_INFO.name为空，则将文件夹名作为name
                     if reload_var_current[EXT_OP_INFO].get("name", None) is None:
                         reload_var_current[EXT_OP_INFO]["name"] = extname
-                    print("Name:", reload_var_current[EXT_OP_INFO]["name"])
+                    logger.debug(f"Name: {reload_var_current[EXT_OP_INFO]["name"]}")
                     
 
                 if EXT_OP_CDLL in reload_feautures:
@@ -324,7 +328,7 @@ def _load_exts_cdll(file: str, regname_prefix: str, is_code_stage: bool = False)
         # int init(void)
         cdll.init.restype = c_int
         cdll.init.argtypes = []
-        print("init()")
+        logger.debug("init()")
         ret = cdll.init()
         if ret != 0:
             raise RuntimeError(f"init() return {ret}")
@@ -404,19 +408,27 @@ def call_processor(name: str, dll: CDLL, args: c_void_p, in_buf: MidBuffer, out_
     else: 
         outbuf_ptr = out_buf.arrptr
     # 获取输入的shape
-    in_shape = in_buf.arr.shape[:-1]
+    # 修复：正确处理一维和多维数组的形状
+    if len(in_buf.arr.shape) == 1:
+        # 一维数组：形状就是数组长度
+        in_shape = in_buf.arr.shape
+    else:
+        # 多维数组：去掉最后一个维度（通常是通道维度）
+        in_shape = in_buf.arr.shape[:-1]
+        in_shape_ct = (c_size_t * len(in_shape))(*in_shape)
     in_shape_ct = (c_size_t * len(in_shape))(*in_shape)
+    print(in_shape)
     result = PIPENodeResult()
     if not is_code_view:
         f1_name = "f1"
-        f1_func = dll.f1
+        f1_func = dll.f1 if hasattr(dll, "f1") else None
         f0_name = "f0"
-        f0_func = dll.f0
+        f0_func = dll.f0 if hasattr(dll, "f0") else None
     else:
         f1_name = "f1p"
-        f1_func = dll.f1p
+        f1_func = dll.f1p if hasattr(dll, "f1p") else None
         f0_name = "f0p"
-        f0_func = dll.f0p
+        f0_func = dll.f0p if hasattr(dll, "f0p") else None
     # 如果有多核，优先使用多核
     if hasattr(dll, f1_name):
         # 准备返回值列表，默认值全是0
@@ -429,7 +441,7 @@ def call_processor(name: str, dll: CDLL, args: c_void_p, in_buf: MidBuffer, out_
         result.ret = ret
     # 否则，尝试单核
     elif hasattr(dll, f0_name):
-        print("Single Core")
+        logger.debug("Single Core")
         ret_main = c_int(0)
         ret = PlProcCore.SingleCore(bytes(name, "utf-8"), f0_func, args, byref(ret_main), 
                                     inbuf_ptr, outbuf_ptr, in_shape_ct)
@@ -456,6 +468,8 @@ class Img2arrPIPE:
         self.code_view = zeros_like(self.img)
         # 编码输出
         self.code_out = empty((0,), dtype=uint8)
+        # 输出
+        self.out = empty((0,), dtype=uint8)
 
     def Pre(self, i: int, empty: bool = False):
         """预处理。返回一个一次性迭代器  
@@ -502,7 +516,7 @@ class Img2arrPIPE:
         dll = self.extdc[EXT_TYPE_CODE]["img"][name][EXT_OP_CDLL]
         # 调用io_GetOutInfo获取输出尺寸
         out_shape_ct = (c_size_t * 1)()
-        in_shape = self.pre.shape[:-1]
+        in_shape = self.pre.shape
         in_shape_ct = (c_size_t * len(in_shape))(*in_shape)
         attr = c_int(0)
         ret = dll.io_GetOutInfo(args, in_shape_ct, out_shape_ct, byref(attr))
@@ -516,11 +530,33 @@ class Img2arrPIPE:
         result = call_processor(name, dll, args, MidBuffer(self.pre), MidBuffer(self.code_out))
         # 返回结果
         return result
+    def Out(self, name: str, args: c_void_p, argslen: int) -> PIPENodeResult:
+        """输出。返回处理结果"""
+        assert name != "", "输出器名称不能为空"
+        # 获取对应名称输出器的动态链接库
+        dll = self.extdc[EXT_TYPE_OUT]["img"][name][EXT_OP_CDLL]
+        # 调用io_GetOutInfo获取输出尺寸
+        out_shape_ct = (c_size_t * 1)()
+        in_shape = self.code_out.shape
+        in_shape_ct = (c_size_t * len(in_shape))(*in_shape)
+        attr = c_int(0)
+        ret = dll.io_GetOutInfo(args, in_shape_ct, out_shape_ct, byref(attr))
+        if ret != 0:
+            raise RuntimeError(f"io_GetOutInfo返回错误码{ret}")
+        # resize到输出尺寸（如果需要的话）
+        out_size = out_shape_ct[0]
+        print("OutSize:", out_size)
+        if self.out.shape[0] != out_size:
+            self.out.resize((out_size,), refcheck=False)
+        # 调用输出器
+        result = call_processor(name, dll, args, MidBuffer(self.code_out), MidBuffer(self.out))
+        # 返回结果
+        return result
     def resetPrePIPE(self):
         """重置预处理链"""
         self.img_pre_buf.clear()
     def __del__(self):
-        print("管线被删除")
+        logger.debug("管线被删除")
 
         
 class Pre_iter:
@@ -720,7 +756,7 @@ class Pre_iter:
                 # 有输出缓冲区，添加写指针
                 self.add_buf_writer(self.i)
         
-        print(f"Call pre index {self.i}, {in_buf_name} -> {out_buf_name}")
+        logger.debug(f"Call pre index {self.i}, {in_buf_name} -> {out_buf_name}")
             
 
         # 调用预处理

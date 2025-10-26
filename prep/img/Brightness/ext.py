@@ -1,4 +1,3 @@
-import json
 from numpy import uint8
 from numpy.typing import NDArray
 from ctypes import CDLL, c_void_p, c_uint8, c_int, POINTER

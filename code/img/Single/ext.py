@@ -31,6 +31,7 @@ class abcUI():
         更新提示文本。在折叠时显示粗略参数时十分重要。
         text: 要显示的文本。
         该函数是线程安全的。
+        仅在预处理扩展中可用。
         """
         ...
     def img2arr_notify_update(self) -> None:

@@ -10,14 +10,12 @@
 #define SHARED __attribute__((visibility("default")))
 #endif
 
-#ifndef likely
 #ifdef __GNUC__
 #define likely(x)   __builtin_expect(!!(x), 1)
 #define unlikely(x) __builtin_expect(!!(x), 0)
 #else
 #define likely(x)   (x)
 #define unlikely(x) (x)
-#endif
 #endif
 
 SHARED const char img2arr_ext_sign[] = "img2arr.prep.img.Histogram";

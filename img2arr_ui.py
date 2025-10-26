@@ -4,7 +4,7 @@ from PySide6.QtWidgets import (
     QApplication, QMainWindow, QDialog,
     QWidget, QFrame, QScrollArea,
     QLabel, QPushButton, QCheckBox, QSlider,
-    QListWidget, QTextEdit,
+    QListWidget, QLineEdit, QTextEdit,
     QHBoxLayout, QVBoxLayout, QSplitter,
     QTabWidget, QTabBar, QSizePolicy, 
     QMenu, QToolTip, QToolButton,
@@ -25,6 +25,9 @@ from threading import Thread, Condition
 
 import queue
 
+import logging
+import logging.config
+
 import sys, os
 import gc
 import time
@@ -41,7 +44,17 @@ from lib.CustomWidgets import (
     CustomUI, CustomBrush
 )
 
+from lib import logging_formatter
+
 import backend  # 后端
+
+def InitLogging():
+    with open("logging_config.json", "r", encoding="utf-8") as f:
+        logging.config.dictConfig(json.load(f))
+
+InitLogging()
+
+logger = logging.getLogger("img2arr.ui")
 
 self_dir = os.path.dirname(__file__)
 SETTINGFILE = os.path.join(self_dir, "setting.json")
@@ -91,15 +104,15 @@ def InitSet():
     setting_file_path = os.path.join(self_dir, SETTINGFILE)
     
     if not os.path.exists(setting_file_path):
-        print("未找到设置文件，将创建并使用默认设置")
+        logger.info("未找到设置文件，将创建并使用默认设置")
         SaveSet()
         return
     
     try:
         LoadSet()
-        print("设置文件加载成功")
+        logger.info("设置文件加载成功")
     except Exception as e:
-        print(f"加载设置失败，错误信息：{e}，将使用默认设置")
+        logger.warning(f"加载设置失败，错误信息：{e}，将使用默认设置")
         SaveSet()
 
 def AutoFmtTime(s: float):
@@ -293,8 +306,7 @@ class WinMain(QObject):
             try:
                 pipe = backend.Img2arrPIPE(file, self.ext)
             except:
-                print(f"{file} 打开失败。错误信息：")
-                traceback.print_exc()
+                logger.error(f"{file} 打开失败。错误信息：\n{traceback.format_exc()}")
                 continue
             self.new_pagemain_signal.signal.emit(file, pipe)
             # 一定要清理资源！！！
@@ -322,10 +334,10 @@ class WinMain(QObject):
             global pipe_update_mode
             if state == Qt.CheckState.Checked.value:
                 pipe_update_mode = backend.PRE_PIPE_MODES.PIPE_MODE_SPEED
-                print("切换为性能模式")
+                logger.debug("切换为性能模式")
             else:
                 pipe_update_mode = backend.PRE_PIPE_MODES.PIPE_MODE_DEFAULT
-                print("切换为默认模式")
+                logger.debug("切换为默认模式")
         cb.stateChanged.connect(cb_change)
             
 
@@ -422,6 +434,7 @@ class PageMain(QWidget):
         # 预处理输出预览更新信号
         self.PreOutViewUpdateSignal = Signals.SignalTuple()
         self.PreOutViewUpdateSignal.signal.connect(lambda args: self_ref() and self_ref().PreUpdateOutViewer(*args), Qt.ConnectionType.AutoConnection)
+        
         # 编码器名称。空字符串表示未选择编码器
         self.code_name = ""
         # 编码器py部分。当有新的编码器被选择时，会覆盖为新的编码器py部分或None。
@@ -432,6 +445,12 @@ class PageMain(QWidget):
         # 编码预览输出预览更新信号（不是编码输出
         self.CodeViewerOutViewUpdateSignal = Signals.SignalTuple()
         self.CodeViewerOutViewUpdateSignal.signal.connect(lambda args: self_ref() and self_ref().CodeUpdateOutViewer(*args), Qt.ConnectionType.AutoConnection)
+
+        # 输出器名称。空字符串表示未选择输出器
+        self.out_name = ""
+        # 输出器py部分。当有新的输出器被选择时，会覆盖为新的输出器py部分或None。
+        self.out_py: object | None = None
+
 
         # 预处理器线程
         self.pre_args_thread = Thread(target=self.PreUpdateThread, daemon=True)
@@ -454,8 +473,8 @@ class PageMain(QWidget):
         self.pre_args = QWidget()
         self.code_args = QWidget()
         self.code_out = QWidget()
-        self.out_arg = QWidget()
-        self.frames = [self.base_out, self.pre_args, self.pre_out, self.code_args, self.code_out, self.out_arg]
+        self.out_args = QWidget()
+        self.frames = [self.base_out, self.pre_args, self.pre_out, self.code_args, self.code_out, self.out_args]
         # 设置属性
         for f in self.frames:
             f.setMinimumSize(10, 10)  # 设置最小尺寸防止自动收缩
@@ -486,7 +505,7 @@ class PageMain(QWidget):
         self.splitter_minor2.addWidget(self.pre_out)
         self.splitter_minor2.addWidget(self.code_args)
         self.splitter_minor3.addWidget(self.code_out)
-        self.splitter_minor3.addWidget(self.out_arg)
+        self.splitter_minor3.addWidget(self.out_args)
         # 将主分割线添加到布局管理器中
         self.main_layout.addWidget(self.splitter_major)
         # 设置主子分割线的分配比相同
@@ -666,21 +685,114 @@ class PageMain(QWidget):
     
     def init_out_args(self):
         self_ref = weakref.ref(self)
-        # 添加一个居中按钮：输出
+
         self.out_args_layout = QVBoxLayout()
-        self.out_arg.setLayout(self.out_args_layout)
-        self.out_args_button = QPushButton("输出")
-        self.out_args_layout.addStretch(1)
-        self.out_args_layout.addWidget(self.out_args_button, alignment=Qt.AlignmentFlag.AlignCenter)
-        self.out_args_layout.addStretch(1)
-        # 点击后输出
-        self.out_args_button.clicked.connect(lambda: self_ref() and self_ref()._test_wrout())
+        self.out_args.setLayout(self.out_args_layout)
+        # 顶部wdg
+        self.out_top_widget = QWidget()
+        self.out_top_widget.setContentsMargins(0, 0, 0, 0)
+        self.out_args_layout.addWidget(self.out_top_widget)
+        # 顶部布局
+        self.out_top_layout = QHBoxLayout()
+        self.out_top_layout.setContentsMargins(0, 0, 0, 0)
+        self.out_top_widget.setLayout(self.out_top_layout)
+        # 提示文本
+        self.out_top_layout.addWidget(QLabel("输出："), alignment=Qt.AlignmentFlag.AlignLeft)
+        self.out_main_text = QLabel("--")
+        self.out_top_layout.addWidget(self.out_main_text, alignment=Qt.AlignmentFlag.AlignLeft)
+        self.out_select_button = QPushButton("选择")
+        # 设置宽度为文字宽度，高度为文字高度
+        rect = self.out_select_button.fontMetrics().boundingRect("选择")
+        self.out_select_button.setFixedWidth(rect.width() + 10)
+        # self.out_select_button.setFixedHeight(rect.height())
+        self.out_top_layout.addWidget(self.out_select_button, alignment=Qt.AlignmentFlag.AlignLeft)
+        # 此处添加弹簧
+        self.out_top_layout.addStretch(1)
+        # 计算时间
+        self.out_calc_time = QLabel("-- ")
+        self.out_top_layout.addWidget(self.out_calc_time, alignment=Qt.AlignmentFlag.AlignRight)
+        # 选择编码器
+        def selectOut():
+            self = self_ref()
+            if self is None: return
+            name = self.ui_select_Processor(backend.EXT_TYPE_OUT, "img")
+            if name is not None:
+                self.SelectOut(name)
+        self.out_select_button.clicked.connect(selectOut)
 
 
+        # 分隔栏
+        self.out_splitter = QSplitter(Qt.Orientation.Vertical)
+        self.out_splitter.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        self.out_args_layout.addWidget(self.out_splitter)
+        # 第一层：主布局
+        self.out_args_scrollarea = QScrollArea()
+        self.out_splitter.addWidget(self.out_args_scrollarea)
+        # 设置基本属性
+        self.out_args_scrollarea.setWidgetResizable(True)
+        # self.out_args_scrollarea.setFrameShape(QFrame.Shape.NoFrame) # 无边框
+        self.out_args_scrollarea.setContentsMargins(0, 0, 0, 0)
+        self.out_args_scrollarea.setBackgroundRole(QPalette.ColorRole.Base)
+        # 确保背景色生效
+        self.out_args_scrollarea.setAutoFillBackground(True)
+        # 有垂直滚动条和水平滚动条
+        self.out_args_scrollarea.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.out_args_scrollarea.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.out_args_scrollarea.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        # 内部默认Widget（显示文本）
+        self.out_args_default = QWidget()
+        self.out_args_default.setContentsMargins(0, 0, 0, 0)
+        self.out_args_default.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
+        self.out_args_scrollarea.setWidget(self.out_args_default)
+        self.out_args_default_layout = QVBoxLayout()
+        self.out_args_default_layout.setContentsMargins(0, 0, 0, 0)
+        # 灰色文本
+        self.out_args_default_text = QLabel("请选择一个编码器以显示控制台")
+        self.out_args_default_text.setStyleSheet("color: gray;")
+        # 上层空余空间 20%, 下层空余空间 80%
+        self.out_args_default_layout.addStretch(2)
+        self.out_args_default_layout.addWidget(self.out_args_default_text, alignment=Qt.AlignmentFlag.AlignCenter)
+        self.out_args_default_layout.addStretch(8)
+        # 默认文本
+        self.out_args_default.setLayout(self.out_args_default_layout)
+        # 第二层：保存。其推荐高度被设为最小高度
+        self.out_save_widget = QWidget()
+        self.out_save_widget.setContentsMargins(0, 0, 0, 0)
+        self.out_save_layout = QVBoxLayout()
+        self.out_save_layout.setContentsMargins(0, 0, 0, 0)
+        self.out_save_widget.setLayout(self.out_save_layout)
+        self.out_splitter.addWidget(self.out_save_widget)
+        # 保存按钮
+        self.out_save_path_layout = QHBoxLayout()
+        self.out_save_layout.addLayout(self.out_save_path_layout)
+        self.out_save_path_layout.addWidget(QLabel("保存路径："))
+        self.out_save_path = QLineEdit()
+        self.out_save_path.setPlaceholderText("请选择保存路径")
+        self.out_save_path_layout.addWidget(self.out_save_path)
+        self.out_save_path_button = QPushButton("浏览...")
+        self.out_save_path_layout.addWidget(self.out_save_path_button)
+        # 浏览按钮点击事件
+        def out_save_path_button_clicked():
+            self = self_ref()
+            if self is None: return
+            path, _ = QFileDialog.getSaveFileName(self.win, "选择保存路径", "", "All Files (*);;Text Files (*.txt)")
+            if path:
+                self.out_save_path.setText(path)
+        self.out_save_path_button.clicked.connect(out_save_path_button_clicked)
+        # 保存按钮
+        self.out_save_button = QPushButton("保存")
+        self.out_save_button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.out_save_layout.addWidget(self.out_save_button)
+        self.out_save_widget.setSizePolicy(QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Fixed)
+        # 保存按钮绑定函数
+        def out_save_button_clicked():
+            self = self_ref()
+            if self is None: return
+            self.test_OutSave(self.out_save_path.text())
+            QMessageBox.information(self.win, "提示", "保存成功")
+        self.out_save_button.clicked.connect(out_save_button_clicked)
 
 
-
-        
     def ui_select_Processor(self, stage: int, type: str) -> str | None:
         """选择某个阶段的处理器，返回str或None."""
         # 创建顶层窗口
@@ -786,10 +898,8 @@ class PageMain(QWidget):
 
         # 获取Python部分
         py_base = ext[backend.EXT_OP_EXT]
-        print(type(py_base))
         if py_base is not None and hasattr(py_base, "UI"):
             py = py_base.UI()
-            print(type(py))
         else:
             py = None
         
@@ -810,7 +920,7 @@ class PageMain(QWidget):
             try:
                 py.ui_init(ui_in, ext[backend.EXT_OP_CDLL], None)
             except:
-                print("控制台", name, "加载失败:\n", traceback.format_exc())
+                logger.error(f"控制台 {name} 加载失败:\n{traceback.format_exc()}")
                 CustomUI.MsgBox_WithDetail(self.win, "错误", "预处理器加载失败", f"预处理器初始化失败，错误信息请展开", traceback.format_exc(), QMessageBox.Icon.Critical, QMessageBox.StandardButton.Ok)
                 err_cause = "控制台加载失败"
         else:
@@ -899,7 +1009,7 @@ class PageMain(QWidget):
                 try:
                     resized = self._Pre_Update(index) or resized # 任意一次需要更新尺寸，则最终需要更新
                 except:
-                    traceback.print_exc()
+                    logger.error(f"预处理 {self.pre_list[index].name} 处理失败:\n{traceback.format_exc()}")
                     break
                 time_calc_end = time.perf_counter()
                 if view_realtime_update:
@@ -921,7 +1031,7 @@ class PageMain(QWidget):
             # 失败
             if not view_realtime_update:
                 self.PreOutViewUpdateSignal.signal.emit((False, "错误！", None))
-        print("预处理刷新线程 结束")
+        logger.debug("预处理刷新线程 结束")
 
     def PreUpdateOutViewer(self, update_view: bool, t: float | int | str, resized: bool):
         """更新预处理输出"""
@@ -1001,7 +1111,7 @@ class PageMain(QWidget):
                 try:
                     arg, arglen = py.update(backend.threads)
                 except:
-                    print(f"预处理 {i} 更新失败，错误信息：{traceback.format_exc()}")
+                    logger.error(f"预处理 {i} 更新失败，错误信息：{traceback.format_exc()}")
                     continue
             else:
                 arg, arglen = backend.NULL, 0
@@ -1015,7 +1125,7 @@ class PageMain(QWidget):
                 try:
                     py.update_end(arg, arglen)
                 except:
-                    print(f"预处理 {i} 更新结束失败，错误信息：{traceback.format_exc()}")
+                    logger.error(f"预处理 {i} 更新结束失败，错误信息：{traceback.format_exc()}")
                     continue
         return it.pre_resized
     
@@ -1053,7 +1163,7 @@ class PageMain(QWidget):
                         self.code_update_notify.notify_all()
                 py.img2arr_notify_update = update_notify
             except:
-                traceback.print_exc()
+                logger.error(f"编码器 {name} 初始化失败，错误信息：{traceback.format_exc()}")
                 err_cause = "初始化失败"
         else:
             err_cause = "没有控制台"
@@ -1094,11 +1204,9 @@ class PageMain(QWidget):
             try:
                 self.code_py.update_end(args, arglen)
             except:
-                print("编码器控制台 update_end 调用失败：")
-                traceback.print_exc()
+                logger.error(f"编码器控制台 update_end 调用失败，错误信息：{traceback.format_exc()}")
         return ret
-
-    
+ 
     def CodeUpdateThread(self):
         """更新编码输出的线程"""
         while True:
@@ -1121,8 +1229,7 @@ class PageMain(QWidget):
                         new_resized = False
                     resized = resized or new_resized # 任意一次需要更新尺寸，则最终需要更新
                 except:
-                    print("编码预览更新失败，报错：")
-                    traceback.print_exc()
+                    logger.error(f"编码器 {self.code_name} 更新失败，错误信息：{traceback.format_exc()}")
                     break
                 time_calc_end = time.perf_counter()
                 if view_realtime_update:
@@ -1137,7 +1244,7 @@ class PageMain(QWidget):
             if not view_realtime_update:
                 self.CodeViewerOutViewUpdateSignal.signal.emit((False, "错误！", None))
         
-        print("编码刷新线程 结束")
+        logger.debug("编码刷新线程 结束")
     
     def CodeUpdateOutViewer(self, update_view: bool, t: float | int | str, resized: bool):
         if t == -1:
@@ -1159,40 +1266,110 @@ class PageMain(QWidget):
         # 创建提示文本
         self.code_top_widget.setToolTip(f"计算耗时：{t_str}\n更新耗时：{AutoFmtTime(time_update_end - time_update_start)}")
 
-    def _test_wrout(self):
-        # 调用update
+    def SelectOut(self, name: str):
+        """选择输出"""
+
+        # 格式与SelectCode相仿
+
+        self_ref = weakref.ref(self)
+
+        # 获取name对应的输出
+        ext = self.pipe.extdc[backend.EXT_TYPE_OUT]["img"][name]
+        # 获取name
+        main_name = ext[backend.EXT_OP_INFO]["name"]
+        # 尝试获取Python部分
+        py_base = ext[backend.EXT_OP_EXT]
+        if py_base is not None and hasattr(py_base, "UI"):
+            py = py_base.UI()
+        else:
+            py = None
+
+        err_cause = ""
+
+        if py is not None and hasattr(py, "ui_init"):
+            try:
+                # 创建QWidget，并初始化
+                new_wdg = QWidget() 
+                # 初始化UI
+                py.ui_init(new_wdg, self.pipe.extdc[backend.EXT_TYPE_CODE], None)
+                # 尝试绑定py.img2arr_notify_update
+                def update_notify():
+                    pass
+                py.img2arr_notify_update = update_notify
+            except:
+                logger.error(f"编码器 {name} 初始化失败，错误信息：{traceback.format_exc()}")
+                err_cause = "初始化失败"
+        else:
+            err_cause = "没有控制台"
+        # 更新文本
+        self.out_main_text.setText(main_name)
+        # 移除现有的QWidget，若不是code_args_default，则删除
+        wdg = self.out_args_scrollarea.takeWidget()
+        if wdg != self.out_args_default:
+            wdg.deleteLater()
+        # 如果err_cause不为空，则显示错误信息，且self.code_py覆盖为None
+        if err_cause:
+            self.out_py = None
+            self.out_args_default_text.setText(err_cause)
+            self.out_args_scrollarea.setWidget(self.out_args_default)
+        else:
+            self.out_py = py
+            self.out_args_scrollarea.setWidget(new_wdg)
+        
+        # 设置self.out_name
+        self.out_name = name
+
+    def test_OutSave(self, filepath: str):
+        # 测试——保存输出，正式版需删除
+
+        # 调用Code_Out部分
+        # 调用py，获取参数
         if self.code_py is not None and hasattr(self.code_py, "update"):
             args, arglen = self.code_py.update(backend.threads)
         else:
             args, arglen = backend.NULL, 0
-        # 调用编码输出
-        self.pipe.Code(self.code_name, args, arglen)
+        # 调用编码预览
+        if self.code_name:
+            ret = self.pipe.Code(self.code_name, args, arglen)
+        else:
+            logger.error("没有选择编码器！")
         # 调用py的update_end（如果有）
         if self.code_py is not None and hasattr(self.code_py, "update_end"):
             try:
                 self.code_py.update_end(args, arglen)
             except:
-                print("编码器控制台 update_end 调用失败：")
-                traceback.print_exc()
-        # 转换为0xXX, 0xXX的字符串格式
-        import numpy as np
-         # 定义格式化函数
-        def format_hex(x):
-            return f'0x{x:02X}'
-        hex_arr = np.vectorize(format_hex)(self.pipe.code_out)
-        # hex_with_prefix = np.char.add('0x', hex_arr)
+                logger.error(f"编码器控制台 update_end 调用失败，错误信息：{traceback.format_exc()}")
 
-        with open("output.txt", "w") as f:
-            f.write(", ".join(hex_arr))
+        # 调用Python部分获取参数
+        if self.out_py is not None and hasattr(self.out_py, "update"):
+            try:
+                args, arglen = self.out_py.update(threads)
+            except:
+                logger.error(f"输出 {self.out_name} 更新失败，错误信息：{traceback.format_exc()}")
+                return
+        else:
+            args = backend.NULL
+            arglen = 0
+        # 调用输出
+        if self.out_name:
+            ret = self.pipe.Out(self.out_name, args, arglen)
+        else:
+            logger.error("没有选择输出！")
+        # 调用py的update_end（如果有）
+        if self.out_py is not None and hasattr(self.out_py, "update_end"):
+            try:
+                self.out_py.update_end(args, arglen)
+            except:
+                logger.error(f"输出 {self.out_name} 控制台 update_end 调用失败，错误信息：{traceback.format_exc()}")
+        # 保存
+        self.pipe.out.tofile(filepath)
 
 
 
-
-        
-
+    
     def deleteLater(self):
         """清理回调"""
-        print("主页面清理")
+        logger.debug("主页面清理")
         # 删除线程
         notify = self.pre_update_notify
         self.pre_update_notify = None
@@ -1218,7 +1395,7 @@ class PageMain(QWidget):
         # 删除自身
         super().deleteLater()
     def __del__(self):
-        print("主页面真的被删除了")
+        logger.info("主页面真的被删除了")
 
 class PreProcessor(QObject):
     def __init__(self, pagemain_ref: weakref.ref[PageMain], name: str, title: str, py: object | None):
@@ -1378,7 +1555,7 @@ class PreProcessor(QObject):
 
         return ui, uwidg
     def deleteLater(self):
-        print(self.title, "删除")
+        logger.info(f"{self.title} 删除")
         super().deleteLater()
 
    
