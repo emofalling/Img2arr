@@ -52,9 +52,9 @@ static int main(bool useint, int contrast_int, int centgray_int,
             int r = in_buf[p + 0];
             int g = in_buf[p + 1];
             int b = in_buf[p + 2];
-            r = ROUND_DIV((r - centgray_int) * contrast_int, 100) + centgray_int;
-            g = ROUND_DIV((g - centgray_int) * contrast_int, 100) + centgray_int;
-            b = ROUND_DIV((b - centgray_int) * contrast_int, 100) + centgray_int;
+            r = /*ROUND_DIV(*/(r - centgray_int) * contrast_int / 100/*)*/ + centgray_int;
+            g = /*ROUND_DIV(*/(g - centgray_int) * contrast_int / 100/*)*/ + centgray_int;
+            b = /*ROUND_DIV(*/(b - centgray_int) * contrast_int / 100/*)*/ + centgray_int;
             out_buf[p + 0] = SaturationtoU8(r);
             out_buf[p + 1] = SaturationtoU8(g);
             out_buf[p + 2] = SaturationtoU8(b);

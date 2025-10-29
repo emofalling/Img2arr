@@ -138,12 +138,17 @@ SHARED int io_GetOutInfo(args_t* args, size_t in_shape[1], size_t out_shape[1], 
  * Error code, 0 means success, non-0 means failure. If the function has no return, it may return a random value.
  */
 SHARED int f0(args_t* args, uint8_t* in_buf, uint8_t* out_buf, size_t in_shape[1]){
+    char *lut[256] = {}; // 内部LUT表
+    // 初始化LUT表
+    for(size_t i = 0; i < 256; i++){
+        lut[i] = args->lut[i];
+    }
     memcpy(out_buf, args->arr_prefix, args->arr_prefix_len);
     out_buf += args->arr_prefix_len;
     for(size_t i = 0; i < in_shape[0]; i++){
         memcpy(out_buf, args->num_prefix, args->num_prefix_len);
         out_buf += args->num_prefix_len;
-        memcpy(out_buf, args->lut[in_buf[i]], args->num_str_len);
+        memcpy(out_buf, lut[in_buf[i]], args->num_str_len);
         out_buf += args->num_str_len;
         memcpy(out_buf, args->num_suffix, args->num_suffix_len);
         out_buf += args->num_suffix_len;
@@ -174,13 +179,41 @@ SHARED int f0(args_t* args, uint8_t* in_buf, uint8_t* out_buf, size_t in_shape[1
  * @return 错误码，0表示成功，非0表示失败。若函数无返回，则可能返回随机值
  * Error code, 0 means success, non-0 means failure. If the function has no return, it may return a random value.
  */
-SHARED int f1_(size_t threads, size_t idx, args_t* args, uint8_t* in_buf, uint8_t* out_buf, size_t in_shape[ ]){ //尚未实现
-    // 计算该线程处理的像素点范围。如果需要特殊需求，请自行修改。
-    // Calculate the pixel range processed by this thread. If you need special requirements, please modify it yourself.
-    const size_t size = in_shape[0] * in_shape[1];
-    const size_t start_i = (size * idx / threads) * 4;
-    const size_t end_i = (size * (idx + 1) / threads) * 4;
-    // Implement here. If no return
+SHARED int f1(size_t threads, size_t idx, args_t* args, uint8_t* in_buf, uint8_t* out_buf, size_t in_shape[]){ //尚未实现
+    char *lut[256] = {}; // 内部LUT表
+    // 初始化LUT表
+    for(size_t i = 0; i < 256; i++){
+        lut[i] = args->lut[i];
+    }
+    // 计算操作长度
+    const size_t size = in_shape[0];
+    const size_t start_i = (size * idx / threads);
+    const size_t end_i = (size * (idx + 1) / threads);
+    // 如果是第一个任务，就写开头
+    if(unlikely(idx == 0)){
+        memcpy(out_buf, args->arr_prefix, args->arr_prefix_len);
+    }
+    // 计算自己的起始索引
+    out_buf += args->arr_prefix_len
+            + (start_i * 
+                (args->num_prefix_len + args->num_str_len + args->num_suffix_len + args->num_split_len));
+    // 开写！
+    for(size_t i = start_i; i < end_i; i++){
+        memcpy(out_buf, args->num_prefix, args->num_prefix_len);
+        out_buf += args->num_prefix_len;
+        memcpy(out_buf, lut[in_buf[i]], args->num_str_len);
+        out_buf += args->num_str_len;
+        memcpy(out_buf, args->num_suffix, args->num_suffix_len);
+        out_buf += args->num_suffix_len;
+        if(likely(i != in_shape[0] - 1)){
+            memcpy(out_buf, args->num_split, args->num_split_len);
+            out_buf += args->num_split_len;
+        }
+    }
+    // 如果是最后一个任务，就写结尾
+    if(unlikely(idx == threads - 1)){
+        memcpy(out_buf, args->arr_suffix, args->arr_suffix_len);
+    }
     return 0;
 }
 

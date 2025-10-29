@@ -1,7 +1,7 @@
 import json
 import numpy as np
 from numpy.typing import NDArray
-from ctypes import CDLL, c_void_p, c_uint64, POINTER, addressof
+from ctypes import CDLL, c_void_p, c_uint64, c_double, c_size_t, POINTER, addressof
 import math
 import weakref
 
@@ -261,7 +261,6 @@ class UI(abcUI):
         self.UpdateTiptext()
         self.img2arr_notify_update()
     def update(self, threads):
-        print("线程数：", threads)
       # [pack]struct{
       # [pack]struct{
       #     uint64_t [out]R[256]; // 直方图求和结果：R
@@ -295,14 +294,15 @@ class UI(abcUI):
         self.threads = threads
 
         return (arg, 8 * 4 * threads)
+
     def update_end(self, arg, arglen):
 
         if self.threads == 1:
             # 单线程情况：直接使用内存视图转换，避免循环
-            r = np.frombuffer((c_uint64 * 256).from_address(addressof(arg[0].contents)), dtype=np.uint64).astype(np.float64)
-            g = np.frombuffer((c_uint64 * 256).from_address(addressof(arg[1].contents)), dtype=np.uint64).astype(np.float64)
-            b = np.frombuffer((c_uint64 * 256).from_address(addressof(arg[2].contents)), dtype=np.uint64).astype(np.float64)
-            a = np.frombuffer((c_uint64 * 256).from_address(addressof(arg[3].contents)), dtype=np.uint64).astype(np.float64)
+            r = np.frombuffer((c_uint64 * 256).from_address(addressof(arg[0].contents)), dtype=np.uint64)
+            g = np.frombuffer((c_uint64 * 256).from_address(addressof(arg[1].contents)), dtype=np.uint64)
+            b = np.frombuffer((c_uint64 * 256).from_address(addressof(arg[2].contents)), dtype=np.uint64)
+            a = np.frombuffer((c_uint64 * 256).from_address(addressof(arg[3].contents)), dtype=np.uint64)
         else:
             # 多线程：访问连续的内存块
             threads = self.threads
@@ -321,15 +321,17 @@ class UI(abcUI):
             a_2d = a_flat.reshape(threads, 256)
 
             # 沿线程维度求和
-            r = np.sum(r_2d, axis=0, dtype=np.float64)
-            g = np.sum(g_2d, axis=0, dtype=np.float64)
-            b = np.sum(b_2d, axis=0, dtype=np.float64)
-            a = np.sum(a_2d, axis=0, dtype=np.float64)
+            r = np.sum(r_2d, axis=0, dtype=np.uint64)
+            g = np.sum(g_2d, axis=0, dtype=np.uint64)
+            b = np.sum(b_2d, axis=0, dtype=np.uint64)
+            a = np.sum(a_2d, axis=0, dtype=np.uint64)
+        
+        
 
-        self.r_arr = r
-        self.g_arr = g
-        self.b_arr = b
-        self.a_arr = a
+        self.r_arr = r.astype(np.float64)
+        self.g_arr = g.astype(np.float64)
+        self.b_arr = b.astype(np.float64)
+        self.a_arr = a.astype(np.float64)
 
         self.ui_update()
 
@@ -353,29 +355,29 @@ class UI(abcUI):
             maxv = np.max(r)
             if maxv != 0.0:
                 r /= maxv
-            else:
-                r[:] = 0
+            # else:
+            #     r[:] = 0
         # 如果仅G, G归一化
         elif self.radio_channel_green.isChecked():
             maxv = np.max(g)
             if maxv != 0.0:
                 g /= maxv
-            else:
-                g[:] = 0
+            # else:
+            #     g[:] = 0
         # 如果仅B, B归一化
         elif self.radio_channel_blue.isChecked():
             maxv = np.max(b)
             if maxv != 0.0:
                 b /= maxv
-            else:
-                b[:] = 0
+            # else:
+            #     b[:] = 0
         # 如果仅A, A归一化
         elif self.radio_channel_alpha.isChecked():
             maxv = np.max(a)
             if maxv != 0.0:
                 a /= maxv
-            else:
-                a[:] = 0
+            # else:
+            #     a[:] = 0
         # 如果RGB, RGB归一化
         elif self.radio_channel_rgb.isChecked():
             maxv = max(np.max(r), np.max(g), np.max(b))
@@ -384,10 +386,10 @@ class UI(abcUI):
                 g /= maxv
                 b /= maxv
                 # a /= maxv
-            else:
-                r[:] = 0
-                g[:] = 0
-                b[:] = 0
+            # else:
+            #     r[:] = 0
+            #     g[:] = 0
+            #     b[:] = 0
         else:
             raise Exception("未选择通道")
 

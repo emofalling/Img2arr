@@ -417,7 +417,6 @@ def call_processor(name: str, dll: CDLL, args: c_void_p, in_buf: MidBuffer, out_
         in_shape = in_buf.arr.shape[:-1]
         in_shape_ct = (c_size_t * len(in_shape))(*in_shape)
     in_shape_ct = (c_size_t * len(in_shape))(*in_shape)
-    print(in_shape)
     result = PIPENodeResult()
     if not is_code_view:
         f1_name = "f1"
@@ -545,7 +544,7 @@ class Img2arrPIPE:
             raise RuntimeError(f"io_GetOutInfo返回错误码{ret}")
         # resize到输出尺寸（如果需要的话）
         out_size = out_shape_ct[0]
-        print("OutSize:", out_size)
+        logger.debug(f"此次输出数据量: {out_size}")
         if self.out.shape[0] != out_size:
             self.out.resize((out_size,), refcheck=False)
         # 调用输出器

@@ -4,7 +4,7 @@ from PySide6.QtWidgets import (
     QApplication, QMainWindow, QDialog,
     QWidget, QFrame, QScrollArea,
     QLabel, QPushButton, QCheckBox, QSlider,
-    QListWidget, QLineEdit, QTextEdit,
+    QListWidget, QLineEdit, QPlainTextEdit, QTextEdit, 
     QHBoxLayout, QVBoxLayout, QSplitter,
     QTabWidget, QTabBar, QSizePolicy, 
     QMenu, QToolTip, QToolButton,
@@ -15,7 +15,7 @@ from PySide6.QtWidgets import (
 )
 
 from PySide6.QtGui import (QCloseEvent, 
-    QPixmap, QImage, QPainter, QPalette, 
+    QPixmap, QImage, QPainter, QPalette, QFontDatabase, QFont, QFontMetrics, 
     QWheelEvent, QMouseEvent, QKeyEvent, QResizeEvent, QDragEnterEvent, QDropEvent, QContextMenuEvent,
     QColor, QPen, QBrush)
 
@@ -60,6 +60,8 @@ self_dir = os.path.dirname(__file__)
 SETTINGFILE = os.path.join(self_dir, "setting.json")
 
 ENCODING = "utf-8"
+
+FontStandardWidthChar = "X"
 
 pipe_update_mode = backend.PRE_PIPE_MODES.PIPE_MODE_DEFAULT
 
@@ -690,7 +692,7 @@ class PageMain(QWidget):
         self.out_args.setLayout(self.out_args_layout)
         # 顶部wdg
         self.out_top_widget = QWidget()
-        self.out_top_widget.setContentsMargins(0, 0, 0, 0)
+        # self.out_top_widget.setContentsMargins(0, 0, 0, 0)
         self.out_args_layout.addWidget(self.out_top_widget)
         # 顶部布局
         self.out_top_layout = QHBoxLayout()
@@ -755,9 +757,99 @@ class PageMain(QWidget):
         self.out_args_default_layout.addStretch(8)
         # 默认文本
         self.out_args_default.setLayout(self.out_args_default_layout)
-        # 第二层：保存。其推荐高度被设为最小高度
+        # 第二层：预览
+        self.out_preview_widget = QWidget()
+        # self.out_preview_widget.setContentsMargins(0, 0, 0, 0)
+        self.out_preview_layout = QVBoxLayout()
+        self.out_preview_layout.setContentsMargins(0, 0, 0, 0)
+        self.out_preview_widget.setLayout(self.out_preview_layout)
+        self.out_splitter.addWidget(self.out_preview_widget)
+        # 文本
+        self.out_preview_layout.addWidget(QLabel("预览"), alignment=Qt.AlignmentFlag.AlignLeft)
+        # 预览的QTextEdit
+        self.out_preview = QTextEdit()
+        self.out_preview.setReadOnly(True)
+        self.out_preview.setLineWrapMode(QTextEdit.LineWrapMode.FixedColumnWidth) # 使用WidgetWidth会导致可能的提前换行
+        self.out_preview_layout.addWidget(self.out_preview)
+        # 如果有Consolas，则使用Consolas字体
+        if "Consolas" in QFontDatabase.families():
+            self.out_preview.setFont(QFont("Consolas"))
+        elif "Courier" in QFontDatabase.families():
+            self.out_preview.setFont(QFont("Courier"))
+        # out_preview的resizeEvent，用于设置换行宽度
+        def out_preview_resizeEvent(event):
+            self = self_ref()
+            if self is None: 
+                return
+
+            # 调用原始resizeEvent确保基础功能正常
+            QTextEdit.resizeEvent(self.out_preview, event)
+
+            # 基于字体度量计算实际字符列数
+            font_metrics = QFontMetrics(self.out_preview.font())
+
+            # 获取平均字符宽度（使用等宽字体的典型字符）
+            char_width = font_metrics.horizontalAdvance(FontStandardWidthChar)
+
+            # 计算可用宽度（考虑边距）
+            viewport_width = self.out_preview.viewport().width()
+            frame_width = self.out_preview.frameWidth()
+            document_margin = self.out_preview.document().documentMargin()
+
+            # 可用宽度 = 视口宽度 - 边距补偿
+            available_width = viewport_width - (frame_width + document_margin) * 2 # - 4
+
+
+            assert char_width > 0, "字符宽度异常"
+
+            columns = int(available_width / char_width)
+            self.out_preview.setLineWrapColumnOrWidth(columns)
+            # print(f"视口宽度: {viewport_width}px, 字符宽度: {char_width}px, 列数: {columns}")
+
+            # 调用刷新
+            self.OutPreUpdate()
+            
+        # 计算最多可显示的行数和列数
+        def out_preview_calculate_max_rows_columns() -> tuple[int, int]:
+            self = self_ref()
+            if self is None: return
+
+            # 获取字体度量
+            font_metrics = QFontMetrics(self.out_preview.font())
+
+            # 计算最大列数（基于字符宽度）
+            char_width = font_metrics.horizontalAdvance(FontStandardWidthChar)  # 使用等宽字符
+            viewport_width = self.out_preview.viewport().width()
+
+            # 考虑边距的可用宽度
+            frame_width = self.out_preview.frameWidth()
+            document_margin = self.out_preview.document().documentMargin()
+            available_width = viewport_width - (frame_width + document_margin) * 2 # - 4
+
+            assert char_width > 0, "字符宽度异常"
+
+            max_columns = int(available_width / char_width)
+
+            # 计算最大行数（基于行高）
+            line_height = font_metrics.lineSpacing()
+            viewport_height = self.out_preview.viewport().height()
+
+            # 考虑边距的可用高度
+            available_height = viewport_height - (frame_width + document_margin) * 2 # - 4
+
+            assert line_height > 0, "行高异常"
+
+            max_rows = int(available_height / line_height)
+            # max_rows = int(round(available_height / line_height))
+
+            return (max_rows, max_columns)
+
+        self.out_preview.resizeEvent = out_preview_resizeEvent
+        self.out_preview.maxRowsColumns = out_preview_calculate_max_rows_columns
+
+        # 第三层：保存。其QWidget为Flxed.
         self.out_save_widget = QWidget()
-        self.out_save_widget.setContentsMargins(0, 0, 0, 0)
+        # self.out_save_widget.setContentsMargins(0, 0, 0, 0)
         self.out_save_layout = QVBoxLayout()
         self.out_save_layout.setContentsMargins(0, 0, 0, 0)
         self.out_save_widget.setLayout(self.out_save_layout)
@@ -767,9 +859,10 @@ class PageMain(QWidget):
         self.out_save_layout.addLayout(self.out_save_path_layout)
         self.out_save_path_layout.addWidget(QLabel("保存路径："))
         self.out_save_path = QLineEdit()
-        self.out_save_path.setPlaceholderText("请选择保存路径")
+        self.out_save_path.setPlaceholderText("请输入保存路径")
         self.out_save_path_layout.addWidget(self.out_save_path)
         self.out_save_path_button = QPushButton("浏览...")
+        self.out_save_path_button.setFixedWidth(self.out_save_path_button.fontMetrics().boundingRect(self.out_save_path_button.text()).width() + 10)
         self.out_save_path_layout.addWidget(self.out_save_path_button)
         # 浏览按钮点击事件
         def out_save_path_button_clicked():
@@ -788,7 +881,11 @@ class PageMain(QWidget):
         def out_save_button_clicked():
             self = self_ref()
             if self is None: return
-            self.test_OutSave(self.out_save_path.text())
+            path = self.out_save_path.text()
+            if path == "":
+                QMessageBox.critical(self.win, "错误", "未选择保存路径！")
+                return
+            self.test_OutSave(path)
             QMessageBox.information(self.win, "提示", "保存成功")
         self.out_save_button.clicked.connect(out_save_button_clicked)
 
@@ -814,7 +911,7 @@ class PageMain(QWidget):
         layout_sub_right = QVBoxLayout()
         layout_sub.addLayout(layout_sub_right)
         # 说明
-        pre_args_desc = QTextEdit()
+        pre_args_desc = QPlainTextEdit()
         pre_args_desc.setReadOnly(True)
         pre_args_desc.setPlaceholderText("选择一个处理器以查看说明")
         layout_sub_right.addWidget(pre_args_desc)
@@ -863,7 +960,7 @@ class PageMain(QWidget):
                 text += "\n版本：\n    "
                 text += version.replace("\n", "\n    ")
             # 选中
-            pre_args_desc.setText(text)
+            pre_args_desc.setPlainText(text)
             # 设置dialogbox增加Ok
             dialogbox.setStandardButtons(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
             # 设置Ok为默认按钮
@@ -1153,7 +1250,7 @@ class PageMain(QWidget):
                 # 创建QWidget，并初始化
                 new_wdg = QWidget() 
                 # 初始化UI
-                py.ui_init(new_wdg, self.pipe.extdc[backend.EXT_TYPE_CODE], None)
+                py.ui_init(new_wdg, ext[backend.EXT_OP_CDLL], None)
                 # 尝试绑定py.img2arr_notify_update
                 def update_notify():
                     self = self_ref()
@@ -1265,6 +1362,8 @@ class PageMain(QWidget):
         time_update_end = time.perf_counter()
         # 创建提示文本
         self.code_top_widget.setToolTip(f"计算耗时：{t_str}\n更新耗时：{AutoFmtTime(time_update_end - time_update_start)}")
+        # 更新
+        self.OutPreUpdate()
 
     def SelectOut(self, name: str):
         """选择输出"""
@@ -1291,11 +1390,15 @@ class PageMain(QWidget):
                 # 创建QWidget，并初始化
                 new_wdg = QWidget() 
                 # 初始化UI
-                py.ui_init(new_wdg, self.pipe.extdc[backend.EXT_TYPE_CODE], None)
+                py.ui_init(new_wdg, ext[backend.EXT_OP_CDLL], None)
                 # 尝试绑定py.img2arr_notify_update
                 def update_notify():
-                    pass
+                    self = self_ref()
+                    if self is None: return
+                    # 更新预览
+                    self.OutPreUpdate()
                 py.img2arr_notify_update = update_notify
+                py.preview_textedit = self.out_preview
             except:
                 logger.error(f"编码器 {name} 初始化失败，错误信息：{traceback.format_exc()}")
                 err_cause = "初始化失败"
@@ -1318,11 +1421,29 @@ class PageMain(QWidget):
         
         # 设置self.out_name
         self.out_name = name
+        # 刷新
+        self.OutPreUpdate()
 
-    def test_OutSave(self, filepath: str):
-        # 测试——保存输出，正式版需删除
+    def OutPreUpdate(self):
+        # 先更新code_out
+        self.CodeUpdate()
+        # 更新预览输出
+        if self.out_py is not None and hasattr(self.out_py, "update_preview"):
+            try:
+                res = self.out_py.update_preview(self.pipe.code_out)
+            except:
+                logger.error(f"输出 {self.out_name} 更新失败，错误信息：{traceback.format_exc()}")
+                return
+            if res == False:
+                # 隐藏预览文本
+                self.out_preview.setVisible(False)
+            else:
+                # 显示预览文本
+                self.out_preview.setVisible(True)
 
-        # 调用Code_Out部分
+    def CodeUpdate(self):
+        
+        # 刷新code_out输出部分
         # 调用py，获取参数
         if self.code_py is not None and hasattr(self.code_py, "update"):
             args, arglen = self.code_py.update(backend.threads)
@@ -1339,6 +1460,8 @@ class PageMain(QWidget):
                 self.code_py.update_end(args, arglen)
             except:
                 logger.error(f"编码器控制台 update_end 调用失败，错误信息：{traceback.format_exc()}")
+
+    def test_OutSave(self, filepath: str):
 
         # 调用Python部分获取参数
         if self.out_py is not None and hasattr(self.out_py, "update"):
