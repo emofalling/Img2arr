@@ -16,9 +16,15 @@ from PySide6.QtGui import (QPixmap, QPainter, QImage, QColor, QBrush,
 
 import weakref
 
+import os.path
+
 from functools import partial
 
 from numpy.typing import NDArray
+
+import logging
+
+logger = logging.getLogger(os.path.basename(__file__))
 
 # img.shape: (h, w, c)
 IMG_SHAPE_H = 0
@@ -224,7 +230,7 @@ class CustomUI:
             clipboard = QApplication.clipboard()
             clipboard.setImage(self.qimage)
         def __del__(self):
-            print("图片预览删除")
+            logger.info(f"图片预览 {self.prefix} 删除")
 
 
 

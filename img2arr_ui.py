@@ -1,7 +1,7 @@
 # Img2arr的UI部分
 # 性能和功能丰富性起见，使用PySide实现（我已经在Tk上踩过太多坑了）
 from PySide6.QtWidgets import (
-    QApplication, QMainWindow, QDialog,
+    QApplication, QMainWindow, QDialog, QStyleFactory, 
     QWidget, QFrame, QScrollArea,
     QLabel, QPushButton, QCheckBox, QSlider,
     QListWidget, QLineEdit, QPlainTextEdit, QTextEdit, 
@@ -15,7 +15,7 @@ from PySide6.QtWidgets import (
 )
 
 from PySide6.QtGui import (QCloseEvent, 
-    QPixmap, QImage, QPainter, QPalette, QFontDatabase, QFont, QFontMetrics, 
+    QPixmap, QImage, QPainter, QPalette, QFontDatabase, QFont, QFontMetrics, QTextOption, 
     QWheelEvent, QMouseEvent, QKeyEvent, QResizeEvent, QDragEnterEvent, QDropEvent, QContextMenuEvent,
     QColor, QPen, QBrush)
 
@@ -38,7 +38,7 @@ import traceback
 from functools import partial
 from itertools import islice
 
-from typing import Union
+from typing import Callable
 
 from lib.CustomWidgets import (
     CustomUI, CustomBrush
@@ -54,7 +54,7 @@ def InitLogging():
 
 InitLogging()
 
-logger = logging.getLogger("img2arr.ui")
+logger = logging.getLogger(os.path.basename(__file__))
 
 self_dir = os.path.dirname(__file__)
 SETTINGFILE = os.path.join(self_dir, "setting.json")
@@ -99,6 +99,18 @@ def SetSet(key: str, value, nosync: bool = False):
     defaultSetting[key] = value
     if not nosync:
         SaveSet()
+    logger.info(f"全局设置更新：{key} = {value}, 临时设置：{nosync}")
+
+def DelSet(key: str, nosync: bool = False) -> bool:
+    """删除设置中的值。若键不存在则返回False，删除成功返回True"""
+    is_del = False
+    if key in defaultSetting:
+        del defaultSetting[key]
+        is_del = True
+    if not nosync:
+        SaveSet()
+    logger.info(f"删除全局设置项：{key}, 临时设置：{nosync}, 成功：{is_del}")
+    return is_del
     
 def InitSet():
     """初始化设置"""
@@ -685,6 +697,49 @@ class PageMain(QWidget):
         self.code_out.setLayout(self.code_out_layout)
         self.code_out_layout.addWidget(self.code_out_viewer)
     
+    class OutPreviewTextEdit(QTextEdit):
+        """Out部分的预览TextEdit
+        resize_function: 当窗口大小改变时调用的函数
+        """
+        resize_function: Callable[[], None] = None
+        def __init__(self, parent=None):
+            super().__init__(parent)
+        def resizeEvent(self, event):
+            if self.resize_function is not None:
+                self.resize_function()
+            super().resizeEvent(event)
+        def maxRowsColumns(self) -> tuple[int, int]:
+
+            # 获取字体度量
+            font_metrics = QFontMetrics(self.font())
+
+            # 计算最大列数（基于字符宽度）
+            char_width = font_metrics.horizontalAdvance(FontStandardWidthChar)  # 使用等宽字符
+            viewport_width = self.viewport().width()
+
+            # 考虑边距的可用宽度
+            frame_width = self.frameWidth()
+            document_margin = self.document().documentMargin()
+            available_width = viewport_width - (frame_width + document_margin) * 2 # - 4
+
+            assert char_width > 0, "字符宽度异常"
+
+            max_columns = int(available_width / char_width)
+
+            # 计算最大行数（基于行高）
+            line_height = font_metrics.lineSpacing()
+            viewport_height = self.viewport().height()
+
+            # 考虑边距的可用高度
+            available_height = viewport_height - (frame_width + document_margin) * 2 # - 4
+
+            assert line_height > 0, "行高异常"
+
+            max_rows = int(available_height / line_height)
+            # max_rows = int(round(available_height / line_height))
+
+            return (max_rows, max_columns)
+    
     def init_out_args(self):
         self_ref = weakref.ref(self)
 
@@ -767,85 +822,23 @@ class PageMain(QWidget):
         # 文本
         self.out_preview_layout.addWidget(QLabel("预览"), alignment=Qt.AlignmentFlag.AlignLeft)
         # 预览的QTextEdit
-        self.out_preview = QTextEdit()
-        self.out_preview.setReadOnly(True)
-        self.out_preview.setLineWrapMode(QTextEdit.LineWrapMode.FixedColumnWidth) # 使用WidgetWidth会导致可能的提前换行
+        self.out_preview = self.OutPreviewTextEdit()
+        # self.out_preview.setReadOnly(True)
+        self.out_preview.setLineWrapMode(QTextEdit.LineWrapMode.WidgetWidth)
+        self.out_preview.setWordWrapMode(QTextOption.WrapMode.WrapAnywhere)
         self.out_preview_layout.addWidget(self.out_preview)
         # 如果有Consolas，则使用Consolas字体
         if "Consolas" in QFontDatabase.families():
             self.out_preview.setFont(QFont("Consolas"))
         elif "Courier" in QFontDatabase.families():
             self.out_preview.setFont(QFont("Courier"))
-        # out_preview的resizeEvent，用于设置换行宽度
-        def out_preview_resizeEvent(event):
-            self = self_ref()
-            if self is None: 
-                return
 
-            # 调用原始resizeEvent确保基础功能正常
-            QTextEdit.resizeEvent(self.out_preview, event)
-
-            # 基于字体度量计算实际字符列数
-            font_metrics = QFontMetrics(self.out_preview.font())
-
-            # 获取平均字符宽度（使用等宽字体的典型字符）
-            char_width = font_metrics.horizontalAdvance(FontStandardWidthChar)
-
-            # 计算可用宽度（考虑边距）
-            viewport_width = self.out_preview.viewport().width()
-            frame_width = self.out_preview.frameWidth()
-            document_margin = self.out_preview.document().documentMargin()
-
-            # 可用宽度 = 视口宽度 - 边距补偿
-            available_width = viewport_width - (frame_width + document_margin) * 2 # - 4
-
-
-            assert char_width > 0, "字符宽度异常"
-
-            columns = int(available_width / char_width)
-            self.out_preview.setLineWrapColumnOrWidth(columns)
-            # print(f"视口宽度: {viewport_width}px, 字符宽度: {char_width}px, 列数: {columns}")
-
-            # 调用刷新
-            self.OutPreUpdate()
-            
-        # 计算最多可显示的行数和列数
-        def out_preview_calculate_max_rows_columns() -> tuple[int, int]:
-            self = self_ref()
-            if self is None: return
-
-            # 获取字体度量
-            font_metrics = QFontMetrics(self.out_preview.font())
-
-            # 计算最大列数（基于字符宽度）
-            char_width = font_metrics.horizontalAdvance(FontStandardWidthChar)  # 使用等宽字符
-            viewport_width = self.out_preview.viewport().width()
-
-            # 考虑边距的可用宽度
-            frame_width = self.out_preview.frameWidth()
-            document_margin = self.out_preview.document().documentMargin()
-            available_width = viewport_width - (frame_width + document_margin) * 2 # - 4
-
-            assert char_width > 0, "字符宽度异常"
-
-            max_columns = int(available_width / char_width)
-
-            # 计算最大行数（基于行高）
-            line_height = font_metrics.lineSpacing()
-            viewport_height = self.out_preview.viewport().height()
-
-            # 考虑边距的可用高度
-            available_height = viewport_height - (frame_width + document_margin) * 2 # - 4
-
-            assert line_height > 0, "行高异常"
-
-            max_rows = int(available_height / line_height)
-            # max_rows = int(round(available_height / line_height))
-
-            return (max_rows, max_columns)
-
-        self.out_preview.resizeEvent = out_preview_resizeEvent
-        self.out_preview.maxRowsColumns = out_preview_calculate_max_rows_columns
+        # 默认隐藏
+        self.out_preview_widget.setVisible(False)
+        # 隐藏垂直滑动条
+        self.out_preview.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        # 绑定resize函数
+        self.out_preview.resize_function = lambda: self_ref().OutPreUpdate()
 
         # 第三层：保存。其QWidget为Flxed.
         self.out_save_widget = QWidget()
@@ -863,12 +856,18 @@ class PageMain(QWidget):
         self.out_save_path_layout.addWidget(self.out_save_path)
         self.out_save_path_button = QPushButton("浏览...")
         self.out_save_path_button.setFixedWidth(self.out_save_path_button.fontMetrics().boundingRect(self.out_save_path_button.text()).width() + 10)
+        # margin = self.out_save_path_button.contentsMargins()
+        # text_width = self.out_save_path_button.fontMetrics().boundingRect(self.out_save_path_button.text()).width()
+        # total_width = text_width + margin.left() + margin.right()#  + 8  # 8像素缓冲
+        # self.out_save_path_button.setFixedWidth(total_width)
         self.out_save_path_layout.addWidget(self.out_save_path_button)
         # 浏览按钮点击事件
         def out_save_path_button_clicked():
             self = self_ref()
             if self is None: return
-            path, _ = QFileDialog.getSaveFileName(self.win, "选择保存路径", "", "All Files (*);;Text Files (*.txt)")
+            # 获取之前的保存路径
+            path = self.out_save_path.text()
+            path, _ = QFileDialog.getSaveFileName(self.win, "选择保存路径", os.path.dirname(path), "All Files (*);;Text Files (*.txt)")
             if path:
                 self.out_save_path.setText(path)
         self.out_save_path_button.clicked.connect(out_save_path_button_clicked)
@@ -885,9 +884,26 @@ class PageMain(QWidget):
             if path == "":
                 QMessageBox.critical(self.win, "错误", "未选择保存路径！")
                 return
-            self.test_OutSave(path)
+            try:
+                self.test_OutSave(path)
+            except Exception as e:
+                logger.error(f"保存失败：{traceback.format_exc()}")
+                QMessageBox.critical(self.win, "错误", f"保存失败：{e}")
+                return
             QMessageBox.information(self.win, "提示", "保存成功")
         self.out_save_button.clicked.connect(out_save_button_clicked)
+        # 如果OutSavePath有值，则设置到输入框
+        if GetSet("OutSavePath"):
+            self.out_save_path.setText(GetSet("OutSavePath"))
+        # 保存输入框绑定函数
+        def out_save_path_textChanged():
+            self = self_ref()
+            if self is None: return
+            path = self.out_save_path.text()
+            # 保存到setting
+            SetSet("OutSavePath", path)
+        self.out_save_path.textChanged.connect(out_save_path_textChanged)
+
 
 
     def ui_select_Processor(self, stage: int, type: str) -> str | None:
@@ -1128,7 +1144,7 @@ class PageMain(QWidget):
             # 失败
             if not view_realtime_update:
                 self.PreOutViewUpdateSignal.signal.emit((False, "错误！", None))
-        logger.debug("预处理刷新线程 结束")
+        logger.info("预处理刷新线程 结束")
 
     def PreUpdateOutViewer(self, update_view: bool, t: float | int | str, resized: bool):
         """更新预处理输出"""
@@ -1341,7 +1357,7 @@ class PageMain(QWidget):
             if not view_realtime_update:
                 self.CodeViewerOutViewUpdateSignal.signal.emit((False, "错误！", None))
         
-        logger.debug("编码刷新线程 结束")
+        logger.info("编码刷新线程 结束")
     
     def CodeUpdateOutViewer(self, update_view: bool, t: float | int | str, resized: bool):
         if t == -1:
@@ -1425,8 +1441,9 @@ class PageMain(QWidget):
         self.OutPreUpdate()
 
     def OutPreUpdate(self):
-        # 先更新code_out
-        self.CodeUpdate()
+        # 如果有，先更新code_out
+        if self.code_name:
+            self.CodeUpdate()
         # 更新预览输出
         if self.out_py is not None and hasattr(self.out_py, "update_preview"):
             try:
@@ -1434,12 +1451,12 @@ class PageMain(QWidget):
             except:
                 logger.error(f"输出 {self.out_name} 更新失败，错误信息：{traceback.format_exc()}")
                 return
-            if res == False:
-                # 隐藏预览文本
-                self.out_preview.setVisible(False)
+            if res is False: # 当且仅当type(res) == bool 且 res == False 时，不显示预览
+                # 隐藏预览
+                self.out_preview_widget.setVisible(False)
             else:
-                # 显示预览文本
-                self.out_preview.setVisible(True)
+                # 显示预览
+                self.out_preview_widget.setVisible(True)
 
     def CodeUpdate(self):
         
@@ -1492,7 +1509,7 @@ class PageMain(QWidget):
     
     def deleteLater(self):
         """清理回调"""
-        logger.debug("主页面清理")
+        logger.info("主页面清理")
         # 删除线程
         notify = self.pre_update_notify
         self.pre_update_notify = None
@@ -1694,10 +1711,14 @@ if __name__ == "__main__":
     backend.SetParallelThreads(threads)
     # 加载UI
     app = QApplication(sys.argv)
-    # 设置Fusion
-    # app.setStyle("Fusion")
-    # 设置风格暗色
-    app.styleHints().setColorScheme(Qt.ColorScheme.Dark)
+    # 获取所有风格
+    styles = QStyleFactory.keys()
+    logger.debug(f"可用风格：\n{'\n'.join(styles)}")
+    # 设置风格
+    app.setStyle("windows11")
+    # 设置第三方风格
+    # from qt_material import apply_stylesheet
+    # apply_stylesheet(app, theme='dark_teal.xml')
     win = QMainWindow()
 
     main = WinMain(app, win) # 直接调用WinMain会导致事件函数无法绑定

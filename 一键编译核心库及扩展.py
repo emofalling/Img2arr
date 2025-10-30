@@ -15,6 +15,8 @@ arch = platform.machine().lower()
 if arch == "amd64":
     arch = "x86_64"
 
+platform_str = f"{system}_{arch}"
+
 def gethash(path: str) -> str:
     
     sha256 = hashlib.sha256()
@@ -23,7 +25,7 @@ def gethash(path: str) -> str:
             if file == ".hash": continue
             with open(os.path.join(root, file), "rb") as f:
                 sha256.update(f.read())
-    return sha256.hexdigest()
+    return sha256.hexdigest() + "\n" + platform_str
 
 # 比较文件夹下除/.hash外的所有文件SHA256与.hash的值是否不相同
 def hashnok(path: str) -> bool:

@@ -361,3 +361,5 @@ class UI(abcUI):
 
             result += self.arr_suffix
             self.preview_textedit.setText(result)
+        
+        # return False # 测试：隐藏预览框

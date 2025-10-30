@@ -30,9 +30,6 @@ from itertools import islice
 
 import logging
 
-logger = logging.getLogger("img2arr.backend")
-
-
 from PIL import Image # 以后会转而使用动态链接库而非PIL
 
 from ctypes import (Structure, CDLL, _Pointer, 
@@ -46,6 +43,8 @@ from typing import Callable, Any, NewType
 import importlib.util
 import platform
 import json
+
+logger = logging.getLogger(os.path.basename(__file__))
 
 NULL = 0
 
@@ -202,12 +201,16 @@ def load_exts(loadf: Callable[[str], None], errf: Callable[[str, Exception], Non
                     continue
                 if (extname not in reload_var[funci][ctype]) and not new:
                     continue
+
+
                 if new: # 如果是new的，需要初始化为一个足够长的列表
                     reload_var[funci][ctype][extname] = [None, None, None, None]
                 reload_var_current = reload_var[funci][ctype][extname]
                 regname = f"img2arr.{funcname}.{ctype}.{extname}"
                 loadf(regname)
                 regname_prefix = f"img2arr.{funcname}.{ctype}."
+                
+                logger.info(f"加载扩展 {regname}")
 
                 # JSON
                 if True:
@@ -230,7 +233,7 @@ def load_exts(loadf: Callable[[str], None], errf: Callable[[str, Exception], Non
                     # 如果EXP_OP_INFO.name为空，则将文件夹名作为name
                     if reload_var_current[EXT_OP_INFO].get("name", None) is None:
                         reload_var_current[EXT_OP_INFO]["name"] = extname
-                    logger.debug(f"Name: {reload_var_current[EXT_OP_INFO]["name"]}")
+                    logger.debug(f"扩展 {regname} 的名称为: {reload_var_current[EXT_OP_INFO]["name"]}")
                     
 
                 if EXT_OP_CDLL in reload_feautures:
@@ -328,7 +331,7 @@ def _load_exts_cdll(file: str, regname_prefix: str, is_code_stage: bool = False)
         # int init(void)
         cdll.init.restype = c_int
         cdll.init.argtypes = []
-        logger.debug("init()")
+        # logger.debug("init()")
         ret = cdll.init()
         if ret != 0:
             raise RuntimeError(f"init() return {ret}")
@@ -555,7 +558,7 @@ class Img2arrPIPE:
         """重置预处理链"""
         self.img_pre_buf.clear()
     def __del__(self):
-        logger.debug("管线被删除")
+        logger.info("管线被删除")
 
         
 class Pre_iter:
@@ -651,7 +654,7 @@ class Pre_iter:
         # 查找users包含i的缓冲区。从后往前找，不然会因为使用了较前的缓冲区而导致多更新了几步，从而性能下降
         # for buf in reversed(self.img_pre_buf):
         for idx, buf in reversed(list(enumerate(self.img_pre_buf))):
-            print("idx:", idx, "readers:", buf.readers, "writers:", buf.writers)
+            logging.debug(f"idx: {idx}, readers: {buf.readers}, writers: {buf.writers}")
             if i in buf.writers:
                 return buf.writers[0]
         # 没有，则i是最后一项（不涉及到任何的中间缓冲区更改）

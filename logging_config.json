@@ -4,7 +4,7 @@
     "formatters": {
         "simple": {
             "()": "lib.logging_formatter.ColoredFormatter",
-            "format": "%(asctime)s.%(msecs)06d [%(levelname)s] %(name)s: %(message)s",
+            "format": "[%(asctime)s.%(msecs)06d] %(levelname)s(%(name)s:%(lineno)d): %(message)s",
             "datefmt": "%H:%M:%S"
         }
     },
