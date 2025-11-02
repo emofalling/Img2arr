@@ -33,6 +33,7 @@ IMG_SHAPE_C = 2
 
 class CustomUI:
     """自定义UI。不需要实例化"""
+    @staticmethod
     def MsgBoxQuesion_WithCheckButton(win: QWidget, title: str, text: str, check_text: str, 
                                       icon:    QMessageBox.Icon           = QMessageBox.Icon.Question, 
                                       buttons: QMessageBox.StandardButton = QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
@@ -55,6 +56,7 @@ class CustomUI:
 
         # 显示消息框并获取结果
         return (msg_box.exec(), check_box.isChecked())
+    @staticmethod
     def MsgBox_WithDetail(win: QWidget, title: str, text: str, inftext: str, detail: str, 
                          icon:    QMessageBox.Icon           = QMessageBox.Icon.Information, 
                          buttons: QMessageBox.StandardButton = QMessageBox.StandardButton.Ok
@@ -69,6 +71,7 @@ class CustomUI:
         msg_box.setDetailedText(detail)
         msg_box.setStandardButtons(buttons)
         return msg_box.exec()
+    @staticmethod
     class GenerelPicViewer(QWidget):
         """一个通用的图片查看器。继承于QWidget"""
         def __init__(self, img: NDArray, prefix = ""):
@@ -114,17 +117,17 @@ class CustomUI:
             self.gpview.setBackgroundBrush(CustomBrush.Chessboard())
             # 自动/手动缩放回调
             self.autoscale = True
-            self.gpview.resizeEvent = lambda e: self_ref() and self_ref().__gpview_resizeEvent(e)
-            self.gpview.wheelEvent = lambda e: self_ref() and self_ref().__gpview_wheelEvent(e)
+            self.gpview.resizeEvent = lambda e: (self := self_ref()) and self.__gpview_resizeEvent(e)
+            self.gpview.wheelEvent = lambda e: (self := self_ref()) and self.__gpview_wheelEvent(e)
             # 使画面能拖动
             self.gpview.setDragMode(QGraphicsView.DragMode.ScrollHandDrag)
-            self.btn_100.clicked.connect(lambda: self_ref() and self_ref().__btn_100_click())
-            self.btn_auto.clicked.connect(lambda: self_ref() and self_ref().__btn_auto_click())
+            self.btn_100.clicked.connect(lambda: (self := self_ref()) and self.__btn_100_click())
+            self.btn_auto.clicked.connect(lambda: (self := self_ref()) and self.__btn_auto_click())
             # 隐藏自适应按钮，但不移出布局
             self.btn_auto.setVisible(False)
 
-            self.gpview.contextMenuEvent = lambda e: self_ref() and self_ref().__gpview_contextMenuEvent(e)
-            self.gpview.keyPressEvent = lambda e: self_ref() and self_ref().__gpview_keyPressEvent(e)
+            self.gpview.contextMenuEvent = lambda e: (self := self_ref()) and self.__gpview_contextMenuEvent(e)
+            self.gpview.keyPressEvent = lambda e: (self := self_ref()) and self.__gpview_keyPressEvent(e)
             # 刷新
             self.update_arr(img)
         # 绑定100%按钮的点击事件
@@ -144,8 +147,9 @@ class CustomUI:
             # 设置自适应缩放为true
             self.autoscale = True
             self.btn_auto.setVisible(False)
-            # 调用gpview_resizeEvent函数
-            self.__gpview_resizeEvent(None)
+            # 刷新
+            # self.__gpview_resizeEvent(None)
+            self.gpview.update()
         # 自动缩放事件（仅在autoscale为True时生效）
         def __gpview_resizeEvent(self, _: QResizeEvent):
             # self = self_ref()
@@ -165,6 +169,8 @@ class CustomUI:
                     off_x = (vrect.width() - srect.width()) / 2
                     off_y = (vrect.height() - srect.height()) / 2
                     self.gpview.translate(off_x, off_y)
+            # 调用gpview的resizeEvent函数
+            QGraphicsView.resizeEvent(self.gpview, _)
         # 手动缩放事件（生效，且会使autoscale为False）
         def __gpview_wheelEvent(self, e: QWheelEvent):
             # self = self_ref()
@@ -188,7 +194,7 @@ class CustomUI:
             # 添加菜单项
             action = menu.addAction("复制图片")
             # 绑定菜单项的点击事件
-            action.triggered.connect(lambda: self_ref() and self_ref().copy_img( ))
+            action.triggered.connect(lambda: (self := self_ref()) and self.copy_img( ))
             # 显示菜单
             menu.exec(e.globalPos())
         # 或者gpview上Ctrl+C复制图片
@@ -215,13 +221,13 @@ class CustomUI:
             self.scene.setSceneRect(QRectF(0, 0, self.img_width, self.img_height))
 
             # 更新
-            self.gpview.resizeEvent(None)
+            self.gpview.update()
 
             # 刷新文本
             self.title.setText(f"{self.prefix}    {self.img_width}x{self.img_height}px")
     
-        def update(self):
-            """更新"""
+        def update_(self):
+            """更新画面"""
             self.qpixmap.convertFromImage(self.qimage)
             self.qpixmap_item.setPixmap(self.qpixmap)
 
@@ -236,6 +242,7 @@ class CustomUI:
 
 class CustomBrush:
     """自定义画刷"""
+    @staticmethod
     def Chessboard():
         """棋盘格纹理"""
         # 创建单个棋盘格单元（2x2格子）

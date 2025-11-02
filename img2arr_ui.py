@@ -15,7 +15,9 @@ from PySide6.QtWidgets import (
 )
 
 from PySide6.QtGui import (QCloseEvent, 
-    QPixmap, QImage, QPainter, QPalette, QFontDatabase, QFont, QFontMetrics, QTextOption, 
+    QPixmap, QImage, QPainter, QPalette, 
+    QFontDatabase, QFont, QFontMetrics, 
+    QTextOption, 
     QWheelEvent, QMouseEvent, QKeyEvent, QResizeEvent, QDragEnterEvent, QDropEvent, QContextMenuEvent,
     QColor, QPen, QBrush)
 
@@ -38,18 +40,26 @@ import traceback
 from functools import partial
 from itertools import islice
 
-from typing import Callable
+from typing import (
+    Callable, Optional, Sequence,
+    TypeVar, 
+    cast
+)
 
 from lib.CustomWidgets import (
     CustomUI, CustomBrush
 )
 
-from lib import logging_formatter
+from lib import ExtensionPyABC
+
+from lib.datatypes import JsonDataType
 
 import backend  # 后端
 
+ENCODING = "utf-8"
+
 def InitLogging():
-    with open("logging_config.json", "r", encoding="utf-8") as f:
+    with open("logging_config.json", "r", encoding=ENCODING) as f:
         logging.config.dictConfig(json.load(f))
 
 InitLogging()
@@ -59,9 +69,7 @@ logger = logging.getLogger(os.path.basename(__file__))
 self_dir = os.path.dirname(__file__)
 SETTINGFILE = os.path.join(self_dir, "setting.json")
 
-ENCODING = "utf-8"
-
-FontStandardWidthChar = "X"
+thread: int = 0
 
 pipe_update_mode = backend.PRE_PIPE_MODES.PIPE_MODE_DEFAULT
 
@@ -71,11 +79,13 @@ pipe_update_mode = backend.PRE_PIPE_MODES.PIPE_MODE_DEFAULT
 # True时，存在内存指针溢出问题
 view_realtime_update = False
 
-defaultSetting = {
-    "LastOpenDir": "",
-    "directlyCloseWelcome": False,
-    "Devices": [0, 1, 2, 3],
-    "Parallel.Threads": 0, # 使用逻辑核心数
+DEVICES_DEFAULT = [0, 1, 2, 3]
+
+defaultSetting: dict[str, JsonDataType] = {
+#     "LastOpenDir": "",
+#     "directlyCloseWelcome": False,
+#     "Devices": [0, 1, 2, 3],
+#     "Parallel.Threads": 0, # 使用逻辑核心数
 }
 
 def LoadSet():
@@ -84,7 +94,7 @@ def LoadSet():
         global defaultSetting
         defaultSetting = json.load(f)
 
-def GetSet(key: str):
+def GetSet(key: str) -> Optional[JsonDataType]:
     """获取设置中的值。若不存在则返回None"""
     return defaultSetting.get(key, None)
 
@@ -188,12 +198,12 @@ class WinMain(QObject):
         self.win.setWindowTitle("Img2arr")
         # 设置窗体大小
         geometry = GetSet("WinGeometry")
-        if geometry:
+        if isinstance(geometry, list):
             # 如果是(-1, -1, -4, -5),表示最大化
             if geometry == [-1, -1, -4, -5]:
                 self.win.showMaximized()
             else:
-                self.win.setGeometry(*geometry)
+                self.win.setGeometry(QRect(*geometry))
 
     def setstyle(self):
         """设置统一样式"""
@@ -238,7 +248,7 @@ class WinMain(QObject):
         # 创建状态的Signal
         self.status_signal = Signals.SignalStr()
         self.status_signal.signal.connect(
-            lambda text: self_ref() and self_ref().setstatus(text, False)
+            lambda text: self.setstatus(text, False) if (self := self_ref()) else logger.error("资源管理错误: self_ref() 返回 None")
         )
     def setstatus(self, text: str | None, thread: bool = False):
         """设置状态栏文本"""
@@ -286,7 +296,13 @@ class WinMain(QObject):
             self.ext_err_list.append((path, err))
         def loadf(package: str):
             self.setstatus(f"加载扩展 {package}", True)
-        self.ext = backend.load_exts(loadf, errf, reload_feautures=GetSet("Devices"))
+        
+        devices = GetSet("Devices")
+        if not isinstance(devices, list) or not all(isinstance(i, int) for i in devices):
+            logging.warning("设备配置错误，将使用默认设备: [0, 1, 2, 3]")
+            devices = DEVICES_DEFAULT
+
+        self.ext = backend.load_exts(loadf, errf, reload_feautures=cast(Sequence[int], devices)) # pylance ***
     
     def NewPageMain(self, file: str, pipe: backend.Img2arrPIPE):
         # 通知接收函数：创建PageMain
@@ -301,7 +317,10 @@ class WinMain(QObject):
             "All Files (*)",
             "Image Files (*.png *.jpg *.bmp)"
         ]
-        file, filter = QFileDialog.getOpenFileNames(self.win, "打开文件", GetSet("LastOpenDir"), ";;".join(FILTERS), FILTERS[1])
+        last_dir = GetSet("LastOpenDir")
+        if not isinstance(last_dir, str):
+            last_dir = ""
+        file, filter = QFileDialog.getOpenFileNames(self.win, "打开文件", last_dir, ";;".join(FILTERS), FILTERS[1])
         if file:
             SetSet("LastOpenDir", os.path.dirname(file[0]))
             # 添加到队列
@@ -317,17 +336,20 @@ class WinMain(QObject):
                 # 文件路径
                 self.setstatus(f"正在打开文件：{data}", True)
                 file = data
-            try:
-                pipe = backend.Img2arrPIPE(file, self.ext)
-            except:
-                logger.error(f"{file} 打开失败。错误信息：\n{traceback.format_exc()}")
-                continue
-            self.new_pagemain_signal.signal.emit(file, pipe)
+                try:
+                    pipe = backend.Img2arrPIPE(file, self.ext)
+                except:
+                    logger.error(f"{file} 打开失败。错误信息：\n{traceback.format_exc()}")
+                    continue
+                self.new_pagemain_signal.signal.emit(file, pipe)
+                del file
+            else:
+                pipe = None # 以后要改
             # 一定要清理资源！！！
             # 如果不del pipe，会产生两份引用
             # 一份是emit的pipe，另一份是局部变量pipe
             # 如果不删除，局部变量pipe会一直驻留在内存中，导致删不掉
-            del pipe, file, data
+            del pipe, data
     def welcome(self):
         """欢迎"""
         tab = QWidget()
@@ -443,27 +465,27 @@ class PageMain(QWidget):
         # 预处理项列表
         self.pre_list: list[PreProcessor] = []
         # 预处理刷新条件变量
-        self.pre_update_notify = Condition()
+        self.pre_update_notify: Optional[Condition] = Condition()
         self.pre_update_index: int | None = None # 线程更新时的索引。None表示更新完毕。
         # 预处理输出预览更新信号
         self.PreOutViewUpdateSignal = Signals.SignalTuple()
-        self.PreOutViewUpdateSignal.signal.connect(lambda args: self_ref() and self_ref().PreUpdateOutViewer(*args), Qt.ConnectionType.AutoConnection)
+        self.PreOutViewUpdateSignal.signal.connect(lambda args: self.PreUpdateOutViewer(*args) if (self := self_ref()) else logger.error("资源管理错误: self_ref() 返回 None"))
         
         # 编码器名称。空字符串表示未选择编码器
         self.code_name = ""
         # 编码器py部分。当有新的编码器被选择时，会覆盖为新的编码器py部分或None。
-        self.code_py: object | None = None
+        self.code_py: ExtensionPyABC.abcExt.UI | None = None
         # 编码器刷新条件变量
-        self.code_update_notify = Condition()
+        self.code_update_notify: Optional[Condition] = Condition()
         self.code_is_need_update = False # 编码器是否需要更新。将在唤醒前同时将其赋值为True以表示需要更新
         # 编码预览输出预览更新信号（不是编码输出
         self.CodeViewerOutViewUpdateSignal = Signals.SignalTuple()
-        self.CodeViewerOutViewUpdateSignal.signal.connect(lambda args: self_ref() and self_ref().CodeUpdateOutViewer(*args), Qt.ConnectionType.AutoConnection)
+        self.CodeViewerOutViewUpdateSignal.signal.connect(lambda args: self.CodeUpdateOutViewer(*args) if (self := self_ref()) else logger.error("资源管理错误: self_ref() 返回 None"))
 
         # 输出器名称。空字符串表示未选择输出器
         self.out_name = ""
         # 输出器py部分。当有新的输出器被选择时，会覆盖为新的输出器py部分或None。
-        self.out_py: object | None = None
+        self.out_py: ExtensionPyABC.abcExt.UI | None = None
 
 
         # 预处理器线程
@@ -607,7 +629,7 @@ class PageMain(QWidget):
             menu = QMenu(self.pre_top_widget)
             # 创建菜单项
             action1 = menu.addAction("重置预处理管线")
-            action1.triggered.connect(lambda: self_ref() and self_ref().Pre_Reset(True))
+            action1.triggered.connect(lambda: self.Pre_Reset(True) if (self := self_ref()) else logger.error("资源管理错误: self_ref() 返回 None"))
             # 显示菜单
             menu.exec(event.globalPos())
         self.pre_top_widget.contextMenuEvent = top_contextMenuEvent
@@ -697,48 +719,30 @@ class PageMain(QWidget):
         self.code_out.setLayout(self.code_out_layout)
         self.code_out_layout.addWidget(self.code_out_viewer)
     
-    class OutPreviewTextEdit(QTextEdit):
+    class OutPreviewTextEdit(ExtensionPyABC.OutPreviewTextEdit):
         """Out部分的预览TextEdit
         resize_function: 当窗口大小改变时调用的函数
         """
-        resize_function: Callable[[], None] = None
+        resize_function: Optional[Callable[[], None]] = None
         def __init__(self, parent=None):
             super().__init__(parent)
         def resizeEvent(self, event):
             if self.resize_function is not None:
                 self.resize_function()
             super().resizeEvent(event)
-        def maxRowsColumns(self) -> tuple[int, int]:
+        def getEquivalentWidth(self) -> int:
+            """获取等效单行显示宽度"""
+            # 计算可用宽度
+            horizontal_margin = (self.frameWidth() + self.document().documentMargin()) * 2
+            usable_width = self.viewport().width() - horizontal_margin
 
-            # 获取字体度量
-            font_metrics = QFontMetrics(self.font())
+            # 计算可用高度和行数
+            line_height = self.fontMetrics().height()
+            vertical_margin = (self.frameWidth() + self.document().documentMargin()) * 2
+            usable_height = self.viewport().height() - vertical_margin
+            max_rows = max(1, int(usable_height // line_height))
 
-            # 计算最大列数（基于字符宽度）
-            char_width = font_metrics.horizontalAdvance(FontStandardWidthChar)  # 使用等宽字符
-            viewport_width = self.viewport().width()
-
-            # 考虑边距的可用宽度
-            frame_width = self.frameWidth()
-            document_margin = self.document().documentMargin()
-            available_width = viewport_width - (frame_width + document_margin) * 2 # - 4
-
-            assert char_width > 0, "字符宽度异常"
-
-            max_columns = int(available_width / char_width)
-
-            # 计算最大行数（基于行高）
-            line_height = font_metrics.lineSpacing()
-            viewport_height = self.viewport().height()
-
-            # 考虑边距的可用高度
-            available_height = viewport_height - (frame_width + document_margin) * 2 # - 4
-
-            assert line_height > 0, "行高异常"
-
-            max_rows = int(available_height / line_height)
-            # max_rows = int(round(available_height / line_height))
-
-            return (max_rows, max_columns)
+            return int(usable_width * max_rows)
     
     def init_out_args(self):
         self_ref = weakref.ref(self)
@@ -838,7 +842,7 @@ class PageMain(QWidget):
         # 隐藏垂直滑动条
         self.out_preview.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         # 绑定resize函数
-        self.out_preview.resize_function = lambda: self_ref().OutPreUpdate()
+        self.out_preview.resize_function = lambda: self.OutPreUpdate() if (self := self_ref()) else logger.error("资源管理错误: self_ref() 返回 None")
 
         # 第三层：保存。其QWidget为Flxed.
         self.out_save_widget = QWidget()
@@ -867,7 +871,11 @@ class PageMain(QWidget):
             if self is None: return
             # 获取之前的保存路径
             path = self.out_save_path.text()
-            path, _ = QFileDialog.getSaveFileName(self.win, "选择保存路径", os.path.dirname(path), "All Files (*);;Text Files (*.txt)")
+            FILTERS = [
+                "All Files (*)",
+                "Text Files (*.txt)"
+            ]
+            path, _ = QFileDialog.getSaveFileName(self.win, "选择保存路径", os.path.dirname(path), ";;".join(FILTERS), FILTERS[1])
             if path:
                 self.out_save_path.setText(path)
         self.out_save_path_button.clicked.connect(out_save_path_button_clicked)
@@ -893,8 +901,9 @@ class PageMain(QWidget):
             QMessageBox.information(self.win, "提示", "保存成功")
         self.out_save_button.clicked.connect(out_save_button_clicked)
         # 如果OutSavePath有值，则设置到输入框
-        if GetSet("OutSavePath"):
-            self.out_save_path.setText(GetSet("OutSavePath"))
+        OutSavePath = GetSet("OutSavePath")
+        if isinstance(OutSavePath, str) and OutSavePath != "":
+            self.out_save_path.setText(OutSavePath)
         # 保存输入框绑定函数
         def out_save_path_textChanged():
             self = self_ref()
@@ -941,11 +950,11 @@ class PageMain(QWidget):
         pre_list: list[str] = []
         pre_names: list[str] = []
         # 按照索引顺序存储说明。None表示没有说明
-        pre_description: list[str] = []
+        pre_description: list[str | None] = []
         # 按照索引顺序存储作者。None表示没有作者
-        pre_author: list[str] = []
+        pre_author: list[str | None] = []
         # 按照索引顺序存储版本。None表示没有版本
-        pre_version: list[str] = []
+        pre_version: list[str | None] = []
         for k, v in self.pipe.extdc[stage][type].items():
             pre_names.append(k)
             info = v[backend.EXT_OP_INFO]
@@ -1010,7 +1019,7 @@ class PageMain(QWidget):
         main_name = ext[backend.EXT_OP_INFO]["name"]
 
         # 获取Python部分
-        py_base = ext[backend.EXT_OP_EXT]
+        py_base: ExtensionPyABC.abcExt | None = ext[backend.EXT_OP_EXT]
         if py_base is not None and hasattr(py_base, "UI"):
             py = py_base.UI()
         else:
@@ -1105,12 +1114,15 @@ class PageMain(QWidget):
     def PreUpdateThread(self):
         """更新预处理管线的线程"""
         while True:
+            if self.pre_update_notify is None:
+                break
             with self.pre_update_notify:
                 self.pre_update_notify.wait()
             if self.pre_update_notify is None: # 结束
                 break
             resized = False # 是否需要更新输出尺寸
             self.PreOutViewUpdateSignal.signal.emit((False, -1, None))
+            time_calc_start, time_calc_end = 0, 0 # 预先初始化，避免Unbound
             while self.pre_update_index is not None:
                 # 如果更新之后没有再需要更新的，此时self.pre_update_index显然为None，自然结束
                 # 如果计算过程中拖动了，则self.pre_update_index会再次被赋值为需要更新的index，自然触发下一次更新
@@ -1119,6 +1131,7 @@ class PageMain(QWidget):
                 if index is None: # 以防万一
                     continue
                 time_calc_start = time.perf_counter()
+                time_calc_end = time_calc_start  # 预先初始化为相同值
                 try:
                     resized = self._Pre_Update(index) or resized # 任意一次需要更新尺寸，则最终需要更新
                 except:
@@ -1130,16 +1143,20 @@ class PageMain(QWidget):
                     resized = False # 重置，防止多次更新
                     # 刷新编码
                     self.code_is_need_update = True
-                    with self.code_update_notify:
-                        self.code_update_notify.notify_all()
+                    if self.code_update_notify:
+                        with self.code_update_notify:
+                            self.code_update_notify.notify_all()
             else:
                 # 成功
+
                 if not view_realtime_update:
                     self.PreOutViewUpdateSignal.signal.emit((True, time_calc_end - time_calc_start, resized))
                     # 刷新编码
                     self.code_is_need_update = True
-                    with self.code_update_notify:
-                        self.code_update_notify.notify_all()
+                    
+                    if self.code_update_notify:
+                        with self.code_update_notify:
+                            self.code_update_notify.notify_all()
                 continue
             # 失败
             if not view_realtime_update:
@@ -1162,7 +1179,7 @@ class PageMain(QWidget):
                 # 数组尺寸发生变化，需要重新加载
                 self.pre_out_viewer.update_arr(self.pipe.pre)
             else:
-                self.pre_out_viewer.update()
+                self.pre_out_viewer.update_()
         time_update_end = time.perf_counter()
         # 创建提示文本
         mid_buf_len = len(self.pipe.img_pre_buf)
@@ -1197,8 +1214,9 @@ class PageMain(QWidget):
         # 设置必要的参数
         self.pre_update_index = index
         # 通知线程更新
-        with self.pre_update_notify:
-            self.pre_update_notify.notify_all()
+        if self.pre_update_notify:
+            with self.pre_update_notify:
+                self.pre_update_notify.notify_all()
     def _Pre_Update(self, index: int = 0) -> bool:
         """更新预处理管线"""
         # print("Start")
@@ -1222,12 +1240,14 @@ class PageMain(QWidget):
                 name = ""
             if py is not None and hasattr(py, "update"):
                 try:
-                    arg, arglen = py.update(backend.threads)
+                    arg: ExtensionPyABC.CPointerArgType
+                    arglen: int
+                    arg, arglen = py.update(backend.threads)  # 如果函数返回两个值
                 except:
                     logger.error(f"预处理 {i} 更新失败，错误信息：{traceback.format_exc()}")
                     continue
             else:
-                arg, arglen = backend.NULL, 0
+                arg, arglen = backend.NULLPTR, 0
             
             it.next(name, arg, arglen, i == 0, i == len(self.pre_list) - 1)
 
@@ -1240,6 +1260,9 @@ class PageMain(QWidget):
                 except:
                     logger.error(f"预处理 {i} 更新结束失败，错误信息：{traceback.format_exc()}")
                     continue
+        if it.pre_resized is None:
+            logger.error("it.pre_resized 为 None")
+            return True
         return it.pre_resized
     
     def SelectCode(self, name: str):
@@ -1247,6 +1270,7 @@ class PageMain(QWidget):
 
         self_ref = weakref.ref(self)
         
+        new_wdg = None
         
         # 获取name对应的列表
         ext = self.pipe.extdc[backend.EXT_TYPE_CODE]["img"][name]
@@ -1272,8 +1296,9 @@ class PageMain(QWidget):
                     self = self_ref()
                     assert self is not None, "PageMain 已被销毁，不能再用了，一定是代码有问题"
                     self.code_is_need_update = True
-                    with self.code_update_notify:
-                        self.code_update_notify.notify_all()
+                    if self.code_update_notify:
+                        with self.code_update_notify:
+                            self.code_update_notify.notify_all()
                 py.img2arr_notify_update = update_notify
             except:
                 logger.error(f"编码器 {name} 初始化失败，错误信息：{traceback.format_exc()}")
@@ -1294,22 +1319,28 @@ class PageMain(QWidget):
         # 否则，换上新的wdg，并设置self.code_py为py
         else:
             self.code_py = py
-            self.code_args_scrollarea.setWidget(new_wdg)
+            if new_wdg is not None:
+                self.code_args_scrollarea.setWidget(new_wdg)
+            else:
+                logger.error(f"编码器 {name} 没有返回QWidget，但err_cause却为空")
 
         # 设置self.code_name
         self.code_name = name
         # 更新编码输出
         self.code_is_need_update = True
-        with self.code_update_notify: 
-            self.code_update_notify.notify_all()
+        if self.code_update_notify:
+            with self.code_update_notify: 
+                self.code_update_notify.notify_all()
     
     def _CodeViewUpdate(self):
         """更新编码预览输出，由CodeUpdateThread调用"""
         # 调用py，获取参数
         if self.code_py is not None and hasattr(self.code_py, "update"):
+            args: ExtensionPyABC.CPointerArgType
+            arglen: int
             args, arglen = self.code_py.update(backend.threads)
         else:
-            args, arglen = backend.NULL, 0
+            args, arglen = backend.NULLPTR, 0
         # 调用编码预览
         ret = self.pipe.CodeView(self.code_name, args, arglen)
         # 调用py的update_end（如果有）
@@ -1323,12 +1354,16 @@ class PageMain(QWidget):
     def CodeUpdateThread(self):
         """更新编码输出的线程"""
         while True:
+            if self.code_update_notify is None: # 结束
+                break
             with self.code_update_notify:
                 self.code_update_notify.wait()
             if self.code_update_notify is None: # 结束
                 break
             resized = False # 是否需要更新输出尺寸
             self.CodeViewerOutViewUpdateSignal.signal.emit((False, -1, None))
+            time_calc_start = 0
+            time_calc_end = 0
             while self.code_is_need_update:
                 need_update = self.code_is_need_update
                 self.code_is_need_update = False
@@ -1374,7 +1409,7 @@ class PageMain(QWidget):
                 # 数组尺寸发生变化，需要重新加载
                 self.code_out_viewer.update_arr(self.pipe.code_view)
             else:
-                self.code_out_viewer.update()
+                self.code_out_viewer.update_()
         time_update_end = time.perf_counter()
         # 创建提示文本
         self.code_top_widget.setToolTip(f"计算耗时：{t_str}\n更新耗时：{AutoFmtTime(time_update_end - time_update_start)}")
@@ -1385,8 +1420,8 @@ class PageMain(QWidget):
         """选择输出"""
 
         # 格式与SelectCode相仿
-
         self_ref = weakref.ref(self)
+        new_wdg = None
 
         # 获取name对应的输出
         ext = self.pipe.extdc[backend.EXT_TYPE_OUT]["img"][name]
@@ -1433,7 +1468,10 @@ class PageMain(QWidget):
             self.out_args_scrollarea.setWidget(self.out_args_default)
         else:
             self.out_py = py
-            self.out_args_scrollarea.setWidget(new_wdg)
+            if new_wdg is not None:
+                self.out_args_scrollarea.setWidget(new_wdg)
+            else:
+                logger.error(f"编码器 {name} 没有返回QWidget，但err_cause却为空")
         
         # 设置self.out_name
         self.out_name = name
@@ -1463,9 +1501,11 @@ class PageMain(QWidget):
         # 刷新code_out输出部分
         # 调用py，获取参数
         if self.code_py is not None and hasattr(self.code_py, "update"):
+            args: ExtensionPyABC.CPointerArgType
+            arglen: int
             args, arglen = self.code_py.update(backend.threads)
         else:
-            args, arglen = backend.NULL, 0
+            args, arglen = backend.NULLPTR, 0
         # 调用编码预览
         if self.code_name:
             ret = self.pipe.Code(self.code_name, args, arglen)
@@ -1483,12 +1523,14 @@ class PageMain(QWidget):
         # 调用Python部分获取参数
         if self.out_py is not None and hasattr(self.out_py, "update"):
             try:
+                args: ExtensionPyABC.CPointerArgType
+                arglen: int
                 args, arglen = self.out_py.update(threads)
             except:
                 logger.error(f"输出 {self.out_name} 更新失败，错误信息：{traceback.format_exc()}")
                 return
         else:
-            args = backend.NULL
+            args = backend.NULLPTR
             arglen = 0
         # 调用输出
         if self.out_name:
@@ -1513,12 +1555,14 @@ class PageMain(QWidget):
         # 删除线程
         notify = self.pre_update_notify
         self.pre_update_notify = None
-        with notify:
-            notify.notify_all()
+        if notify:
+            with notify:
+                notify.notify_all()
         notify = self.code_update_notify
         self.code_update_notify = None
-        with notify:
-            notify.notify_all()
+        if notify:
+            with notify:
+                notify.notify_all()
         # 删除所有预处理器界面
         for obj in self.pre_list:
             obj.deleteLater()
@@ -1537,8 +1581,10 @@ class PageMain(QWidget):
     def __del__(self):
         logger.info("主页面真的被删除了")
 
+PageMainSelf = TypeVar('PageMainSelf', bound='PageMain')
+
 class PreProcessor(QObject):
-    def __init__(self, pagemain_ref: weakref.ref[PageMain], name: str, title: str, py: object | None):
+    def __init__(self, pagemain_ref: weakref.ref[PageMainSelf], name: str, title: str, py: ExtensionPyABC.abcExt.UI | None):
         super().__init__()
         self_ref = weakref.ref(self)
         self.pagemain_ref = pagemain_ref
@@ -1551,7 +1597,7 @@ class PreProcessor(QObject):
         # print(type(self.py))
         if self.py is not None:
             # print("挂载回调")
-            self.py.img2arr_notify_update = lambda: self_ref() and self_ref().img2arr_notify_update()
+            self.py.img2arr_notify_update = lambda: self.img2arr_notify_update() if (self := self_ref()) else logger.error("资源管理错误: self_ref() 返回 None")
         self.ui, self.ui_in = self.init_ui()
     @property
     def pagemain(self) -> PageMain:
@@ -1604,19 +1650,19 @@ class PreProcessor(QObject):
             # 添加删除选项
             action = menu.addAction("删除")
             # 菜单点击事件
-            action.triggered.connect(lambda: self_ref() and self_ref().pagemain.Pre_Delete(i))
+            action.triggered.connect(lambda: self.pagemain.Pre_Delete(i) if (self := self_ref()) else logger.error("资源管理错误: self_ref() 返回 None"))
             # 上移
             action = menu.addAction("上移")
             # 若i=0，则禁用
             action.setEnabled(i != 0)
             # 菜单点击事件
-            action.triggered.connect(lambda: self_ref() and self_ref().pagemain.Pre_Move(i, -1))
+            action.triggered.connect(lambda: self.pagemain.Pre_Move(i, -1) if (self := self_ref()) else logger.error("资源管理错误: self_ref() 返回 None"))
             # 下移
             action = menu.addAction("下移")
             # 若i=len-1，则禁用
             action.setEnabled(i != maxi)
             # 菜单点击事件
-            action.triggered.connect(lambda: self_ref() and self_ref().pagemain.Pre_Move(i, 1))
+            action.triggered.connect(lambda: self.pagemain.Pre_Move(i, 1) if (self := self_ref()) else logger.error("资源管理错误: self_ref() 返回 None"))
             # 显示菜单
             menu.exec(event.globalPos())
         wdg_upper.contextMenuEvent = wdg_upper_contextMenuEvent
@@ -1642,9 +1688,10 @@ class PreProcessor(QObject):
         tiptext.setStyleSheet("font-style: italic; color: gray;")
         tiptext.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         layout_upper.addWidget(tiptext)
+        tiptext_ref = weakref.ref(tiptext)
 
         self.update_tiptext_signal = Signals.SignalStr()
-        self.update_tiptext_signal.signal.connect(lambda text: tiptext.setText(text))
+        self.update_tiptext_signal.signal.connect(lambda text: tiptext.setText(text) if (tiptext := tiptext_ref()) else logger.error("资源管理错误: tiptext_ref() 返回 None"))
 
         # 如果py不为None, 绑定回调
         if self.py is not None:
@@ -1705,9 +1752,11 @@ if __name__ == "__main__":
     # 加载配置
     InitSet()
     # 初始化线程数
-    threads = GetSet("Parallel.Threads")
-    if threads is None:
+    threads_local = GetSet("Parallel.Threads")
+    if not isinstance(threads_local, int) or threads_local < 0:
         SetSet("Parallel.Threads", 0)
+        threads_local = 0
+    threads = threads_local
     backend.SetParallelThreads(threads)
     # 加载UI
     app = QApplication(sys.argv)
@@ -1715,10 +1764,10 @@ if __name__ == "__main__":
     styles = QStyleFactory.keys()
     logger.debug(f"可用风格：\n{'\n'.join(styles)}")
     # 设置风格
-    app.setStyle("windows11")
+    # app.setStyle("Fusion")
     # 设置第三方风格
-    # from qt_material import apply_stylesheet
-    # apply_stylesheet(app, theme='dark_teal.xml')
+    from qt_material import apply_stylesheet
+    apply_stylesheet(app, theme='dark_teal.xml')
     win = QMainWindow()
 
     main = WinMain(app, win) # 直接调用WinMain会导致事件函数无法绑定

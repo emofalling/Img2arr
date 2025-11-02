@@ -39,14 +39,23 @@ from ctypes import (Structure, CDLL, _Pointer,
 
 import sys, os
 from types import ModuleType
-from typing import Callable, Any, NewType
+from typing import Callable, Any, NewType, Sequence, Optional
+from typing import cast as cast_type
 import importlib.util
 import platform
 import json
 
+from lib.datatypes import JsonDataType
+
+from lib import ExtensionPyABC
+
 logger = logging.getLogger(os.path.basename(__file__))
 
 NULL = 0
+
+NULLPTR = cast(NULL, c_void_p)
+
+
 
 self_dir = os.path.dirname(__file__)
 
@@ -70,6 +79,7 @@ system = platform.system().lower()
 if system == "windows": soext = "dll"
 elif system == "linux": soext = "so"
 elif system == "darwin": soext = "dylib"
+else: raise ImportError("Unsupported system: " + system)
 # 获取CPU架构（小写）
 arch = platform.machine().lower()
 if arch == "amd64":
@@ -123,7 +133,7 @@ PlProcCore.Exit.restype = None
 def CDLLreadsig(ext: CDLL) -> str: # 读取动态链接库签名
     return string_at(ext.img2arr_ext_sign).decode('utf-8', 'ignore')
 
-def load_module_from_path(file_path, module_name):
+def load_module_from_path(file_path, module_name) -> ExtensionPyABC.abcExt:
     """从文件路径导入模块"""
     spec = importlib.util.spec_from_file_location(module_name, file_path)
     if spec is None:
@@ -133,12 +143,14 @@ def load_module_from_path(file_path, module_name):
     sys.modules[module_name] = module
     
     try:
+        if spec.loader is None:
+            raise ImportError(f"Unable to load module {module_name} from {file_path}: no loader")
         spec.loader.exec_module(module)
     except Exception as e:
         del sys.modules[module_name]
         raise ImportError(f"Loading module {module_name} from {file_path} failed: {e}")
     
-    return module
+    return cast_type(ExtensionPyABC.abcExt, module)
 
 EXT_TYPE_OPEN = 0
 EXT_TYPE_PREP = 1
@@ -158,16 +170,18 @@ EXT_PATH_MULTICORE = 1
 EXT_PATH_OPENCL = 2
 EXT_PATH_CUDA = 3
 
+ExtMain = tuple[dict[str, str], CDLL, ExtensionPyABC.abcExt | None, Any | None, None]
+
 ExtItem = dict[str, 
             dict[str, 
-                list[dict[str, Any], CDLL | None, ModuleType | None, Any | None, None]
+                 ExtMain
             ]
         ]
 
 ExtList = tuple[ExtItem, ExtItem, ExtItem, ExtItem]
 
 def load_exts(loadf: Callable[[str], None], errf: Callable[[str, Exception], None], 
-              reload_var: ExtList | None = None, reload_feautures: tuple[int] = (0, 1, 2, 3)) -> ExtList:
+              reload_var: ExtList | None = None, reload_feautures: Sequence[int] = (0, 1, 2, 3)) -> ExtList:
     """加载所有扩展"""
     
     target_json    = "info.json"
@@ -177,7 +191,7 @@ def load_exts(loadf: Callable[[str], None], errf: Callable[[str, Exception], Non
 
     new = False
     if reload_var is None:
-        reload_var: ExtList = ({}, {}, {}, {})
+        reload_var = ({}, {}, {}, {})
         new = True
     else: # 检查传入函数是否为tuple[dict, dict, dict, dict]
         assert len(reload_var) == EXT_TYPE_NUMS
@@ -204,8 +218,9 @@ def load_exts(loadf: Callable[[str], None], errf: Callable[[str, Exception], Non
 
 
                 if new: # 如果是new的，需要初始化为一个足够长的列表
-                    reload_var[funci][ctype][extname] = [None, None, None, None]
-                reload_var_current = reload_var[funci][ctype][extname]
+                    reload_var[funci][ctype][extname] = ({}, None, None, None, None)
+                # reload_var_current = reload_var[funci][ctype][extname]
+                reload_var_new = [{}, None, None, None, None]
                 regname = f"img2arr.{funcname}.{ctype}.{extname}"
                 loadf(regname)
                 regname_prefix = f"img2arr.{funcname}.{ctype}."
@@ -224,16 +239,16 @@ def load_exts(loadf: Callable[[str], None], errf: Callable[[str, Exception], Non
                             errf(path, e)
                             failed = True
                         else:
-                            reload_var_current[EXT_OP_INFO] = ext
+                            reload_var_new[EXT_OP_INFO] = ext
                     else:
                         failed = True
                     if failed:
                         # 创建一个空字典
-                        reload_var_current[EXT_OP_INFO] = {}
+                        reload_var_new[EXT_OP_INFO] = {}
                     # 如果EXP_OP_INFO.name为空，则将文件夹名作为name
-                    if reload_var_current[EXT_OP_INFO].get("name", None) is None:
-                        reload_var_current[EXT_OP_INFO]["name"] = extname
-                    logger.debug(f"扩展 {regname} 的名称为: {reload_var_current[EXT_OP_INFO]["name"]}")
+                    if reload_var_new[EXT_OP_INFO].get("name", None) is None:
+                        reload_var_new[EXT_OP_INFO]["name"] = extname
+                    logger.debug(f"扩展 {regname} 的名称为: {reload_var_new[EXT_OP_INFO]["name"]}")
                     
 
                 if EXT_OP_CDLL in reload_feautures:
@@ -248,24 +263,27 @@ def load_exts(loadf: Callable[[str], None], errf: Callable[[str, Exception], Non
                     except Exception as e:
                         errf(path, e)
                         continue
-                    reload_var_current[EXT_OP_CDLL] = ext
+                    reload_var_new[EXT_OP_CDLL] = ext
 
                 if EXT_OP_EXT in reload_feautures:
                     # 扩展模块
                     path = os.path.join(ext_fullpath, target_ctlext)
                     if os.path.isfile(path):
                         try:
-                            ext = _load_exts_ctlext(path, reload_var_current[EXT_OP_CDLL])
+                            ext = _load_exts_ctlext(path, reload_var_new[EXT_OP_CDLL])
                         except Exception as e:
                             errf(path, e)
                             continue
-                        reload_var_current[EXT_OP_EXT] = ext
+                        reload_var_new[EXT_OP_EXT] = ext
 
                 if EXT_OP_OPENCL in reload_feautures:
                     # opencl
                     path = os.path.join(ext_fullpath, target_opencl)
                     if os.path.isfile(path):
                         ...
+                
+                # 赋值回去
+                reload_var[funci][ctype][extname] = cast_type(ExtMain, reload_var_new)
 
                                     
 
@@ -353,7 +371,11 @@ threads = 0
 def SetParallelThreads(thrs: int) -> int:
     global threads
     if thrs == 0:
-        thrs = os.cpu_count()
+        thrs_ = os.cpu_count()
+        if thrs_ is None:
+            thrs = 1
+        else:
+            thrs = thrs_
     threads = PlProcCore.InitThreadPool(thrs)
     return threads
 
@@ -392,17 +414,17 @@ class PIPENodeResult:
 class MidBuffer:
     def __init__(self, arr: NDArray):
         self.arr = arr
-        self.arrptr: _Pointer[c_uint8] = None
+        self.arrptr: _Pointer[c_uint8]
         self.readers: list[int] = []
         self.writers: list[int] = []
         self.update_ptr()
     def update_ptr(self):
         self.arrptr = self.arr.ctypes.data_as(POINTER(c_uint8))
-    def resize(self, shape: tuple[int], refcheck=False):
+    def resize(self, shape: Sequence[int], refcheck=False):
         self.arr.resize(shape, refcheck=refcheck)
         self.update_ptr()
 
-def call_processor(name: str, dll: CDLL, args: c_void_p, in_buf: MidBuffer, out_buf: MidBuffer | None, is_code_view: bool = False):
+def call_processor(name: str, dll: CDLL, args: ExtensionPyABC.CPointerArgType, in_buf: MidBuffer, out_buf: MidBuffer | None, is_code_view: bool = False):
     """调用处理"""
     # 获取指针
     inbuf_ptr = in_buf.arrptr
@@ -489,7 +511,7 @@ class Img2arrPIPE:
                 it.pre_resized = False
             nparr_copyto(self.pre, self.img, casting="no")
         return it
-    def CodeView(self, name: str, args: c_void_p, argslen: int) -> tuple[PIPENodeResult, bool]:
+    def CodeView(self, name: str, args: ExtensionPyABC.CPointerArgType, argslen: int) -> tuple[PIPENodeResult, bool]:
         """编码预览图刷新。返回处理结果和code_view尺寸是否更新的标志"""
         assert name != "", "编码器名称不能为空"
         view_updated = False
@@ -511,7 +533,7 @@ class Img2arrPIPE:
         result = call_processor(name, dll, args, MidBuffer(self.pre), MidBuffer(self.code_view), is_code_view=True)
         # 返回结果
         return result, view_updated
-    def Code(self, name: str, args: c_void_p, argslen: int) -> PIPENodeResult:
+    def Code(self, name: str, args: ExtensionPyABC.CPointerArgType, argslen: int) -> PIPENodeResult:
         """编码。返回处理结果"""
         assert name != "", "编码器名称不能为空"
         # 获取对应名称编码器的动态链接库
@@ -532,7 +554,7 @@ class Img2arrPIPE:
         result = call_processor(name, dll, args, MidBuffer(self.pre), MidBuffer(self.code_out))
         # 返回结果
         return result
-    def Out(self, name: str, args: c_void_p, argslen: int) -> PIPENodeResult:
+    def Out(self, name: str, args: ExtensionPyABC.CPointerArgType, argslen: int) -> PIPENodeResult:
         """输出。返回处理结果"""
         assert name != "", "输出器名称不能为空"
         # 获取对应名称输出器的动态链接库
@@ -575,7 +597,7 @@ class Pre_iter:
         """
         self.cur_buf_index = self.init_current_buf(self.i) # 当前中间缓冲区索引
         # print("Init buf index:", self.cur_buf_index)
-        self.pre_resized = None 
+        self.pre_resized: Optional[bool] = None 
         """pre的尺寸是否发生了更新。  
         None: 还没跑到最后一步  
         True: 更新了。需要UI端进行一定处理以适应新的尺寸  
@@ -660,7 +682,7 @@ class Pre_iter:
         # 没有，则i是最后一项（不涉及到任何的中间缓冲区更改）
         return i
 
-    def next(self, name: str, args: c_void_p, argsize: int, is_head: bool = False, is_tail: bool = False) -> tuple[PIPENodeResult, NDArray[uint8]]:
+    def next(self, name: str, args: ExtensionPyABC.CPointerArgType, argsize: int, is_head: bool = False, is_tail: bool = False):
         """迭代一次  
         name: 要操作的预处理名称*  
         args: 参数  
@@ -707,7 +729,9 @@ class Pre_iter:
         elif name == "":
             # 特殊扩展：REUSE，输入复制到输出
             out_shape = in_buf.arr.shape[:-1]
+            in_shape = out_shape
             out_attr = PRE_ATTRS.ATTR_REUSE
+            dll = None
 
         else:
             raise AttributeError("name类型错误！")
@@ -726,10 +750,11 @@ class Pre_iter:
             # print("Tail")
             out_buf = self.pre
             out_buf_name = "pre" # 调试用，跟踪管线路径
+            out_buf_shape_with_c = (*out_shape, 4)
             # 检查尺寸是否匹配
-            if out_buf.arr.shape != (*out_shape, 4):
+            if out_buf.arr.shape != out_buf_shape_with_c:
                 # 调整大小
-                self.pre.resize((*out_shape, 4), refcheck=False)
+                self.pre.resize(out_buf_shape_with_c, refcheck=False)
                 self.pre_resized = True
             else:
                 self.pre_resized = False
@@ -763,17 +788,23 @@ class Pre_iter:
 
         # 调用预处理
         if name != "": # 默认逻辑
-            ret = call_processor(name, dll, args, in_buf, out_buf)
+            if dll is not None:
+                ret = call_processor(name, dll, args, in_buf, out_buf)
+            else:
+                logger.error("预处理时，name不为空，但dll为None")
         else: # 空扩展，直接复制
-            if in_buf.arrptr != out_buf.arrptr: # 开始复制
-                nparr_copyto(out_buf.arr, in_buf.arr, "no")
-            else: # 不用复制
-                pass
+            if out_buf is not None:
+                if in_buf.arrptr != out_buf.arrptr: # 开始复制
+                    nparr_copyto(out_buf.arr, in_buf.arr, "no")
+                else: # 不用复制
+                    pass
+            else:
+                logger.error("空扩展，但out_buf为None")
             ret = None
 
         self.i += 1
 
-        return ret, out_buf
+        return None, None # TODO: 处理返回值问题
 
     def __del__(self):
         """清理"""

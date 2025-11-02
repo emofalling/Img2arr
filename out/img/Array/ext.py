@@ -10,64 +10,7 @@ from PySide6.QtCore import Qt, QTimer, QObject
 
 from PySide6.QtGui import QPalette, QColor, QFontMetrics, QIntValidator
 
-
-class OutPreviewTextEdit(QTextEdit):
-    """用于显示输出预览的QTextEdit。仅在输出扩展中可用。"""
-    def maxRowsColumns(self) -> tuple[int, int]:
-        """获取能显示的最大行数和列数。"""
-        ...
-
-class abcUI():
-    """Main的抽象类"""
-    def __init__(self):
-        """类初始化代码。用处不大"""
-        ...
-    def ui_init(self, widget: QWidget, ext: CDLL, save: dict | None):
-        """UI初始化时的加载代码。每个独立的扩展控制台都会创建一个独立的类。
-        widget: 供自身使用的QWidget。
-        ext: 自己的动态链接库扩展。
-        save: 之前存档的内容。若没有，则为None。
-        """
-        ...
-    def __del__(self):
-        """UI销毁时要执行的代码"""
-        ...
-    def ui_save(self) -> dict:
-        """保存当前UI的设置。返回一个字典或None。当窗口或标签页关闭时，在开启存档后会调用此函数。"""
-        ...
-    def img2arr_UpdateTiptext(self, text: str) -> None:
-        """不需要扩展提供此函数。img2arr开头的所有函数都不需要扩展提供，而作为扩展的一个辅助功能。所有img2arr开头的函数在__init__后才会存在。
-        更新提示文本。在折叠时显示粗略参数时十分重要。
-        text: 要显示的文本。
-        该函数是线程安全的。
-        仅在预处理扩展中可用。
-        """
-        ...
-    def img2arr_notify_update(self) -> None:
-        """通知img2arr更新预处理。
-        """
-        ...
-    def update(self, threads: int) -> tuple[c_void_p, int]:
-        """当img2arr需要刷新计算时调用。可能在别的线程中调用，因此请使用线程安全的方法在此函数修改UI。
-        应返回一个元组，第一个元素为传参的指针，第二个元素为传参的长度
-        threads: 此次的线程数。1表示单线程，0表示使用了OpenCL，其余表示多线程的线程数。
-        """
-        ...
-    def update_end(self, arg: c_void_p, arglen: int) -> None:
-        """当img2arr管线更新结束时调用。
-        arg: 上一次update传参的指针。
-        arglen: 上一次update传参的长度。
-        """
-        ...
-    preview_textedit: OutPreviewTextEdit | None = ...
-    """
-    预览的文本框。仅在输出扩展中可用。
-    """
-    def update_preview(self, arr: NDArray[uint8]) -> bool | None:
-        """当img2arr需要更新预览时调用。仅在输出扩展中可用。
-        若未定义此函数，或函数返回False, 则隐藏预览，否则显示预览。
-        """
-        ...
+from lib.ExtensionPyABC import abcExt
 
 BASE62 = string.digits + string.ascii_lowercase + string.ascii_uppercase
 
@@ -82,7 +25,7 @@ def int2str(num: int, base: int = 62) -> str:
         res = BASE62[remainder] + res
     return res
     
-class UI(abcUI):
+class UI(abcExt.UI):
     """Main的默认实现"""
     def __init__(self):
         pass
@@ -297,69 +240,72 @@ class UI(abcUI):
         return (byref(args), sizeof(args))
 
     def update_preview(self, arr: NDArray[uint8]):
-        # 计算最大输出字符数
-        rc = self.preview_textedit.maxRowsColumns()
-        max_prelen = rc[0] * rc[1]
+        # 如果没有self.preview_textedit，则直接退出
+        if not isinstance(self.preview_textedit, QTextEdit): return False
+        arr_prefix = self.arr_prefix
+        arr_suffix = self.arr_suffix
+        num_prefix = self.num_prefix
+        num_suffix = self.num_suffix
+        num_split = self.num_split
+        lut = self.LUT
+        # 计算等效最大宽度
+        max_width = self.preview_textedit.getEquivalentWidth()
+        # 获取fontMetrics
+        fm = self.preview_textedit.fontMetrics()
+        # 数组前缀与后缀字符宽度
+        arr_prefix_width = fm.horizontalAdvance(arr_prefix)
+        arr_suffix_width = fm.horizontalAdvance(arr_suffix)
+        # 数字前缀与后缀字符宽度
+        num_prefix_width = fm.horizontalAdvance(num_prefix)
+        num_suffix_width = fm.horizontalAdvance(num_suffix)
+        # 数字分隔符字符宽度
+        num_split_width = fm.horizontalAdvance(num_split)
 
-        # 计算一个单位数字(包含分割符)的字符数
-        num_strlen = len(self.LUT[0]) + len(self.num_prefix) + len(self.num_suffix) + len(self.num_split)
-        # 计算结尾数字(不包含分割符)的字符数
-        endnum_strlen = len(self.LUT[0]) + len(self.num_prefix) + len(self.num_suffix)
+        # 获取一个非结尾数字的字面表示及宽度的函数
+        def get_num(num: int) -> tuple[str, int]:
+            num_s = lut[num]
+            num_str = num_prefix + num_s + num_suffix + num_split
+            num_width = num_prefix_width + fm.horizontalAdvance(num_s) + num_suffix_width + num_split_width
+            return (num_str, num_width)
 
-        # 计算剩给数字部分的字符数
-        max_numlen = max_prelen - len(self.arr_prefix) - len(self.arr_suffix)
-
-        # 计算能否将所有的数字放下
-        if len(arr) == 0:
-            # 空数组情况
-            self.preview_textedit.setText(self.arr_prefix + self.arr_suffix)
-        elif (len(arr) - 1) * num_strlen + endnum_strlen <= max_numlen:
-            # 直接输出所有数字
-            result = self.arr_prefix
-            for i, num in enumerate(arr):
-                result += self.num_prefix + self.LUT[num] + self.num_suffix
-                if i != len(arr) - 1:
-                    result += self.num_split
-            result += self.arr_suffix
-            self.preview_textedit.setText(result)
+        # 第一个数字的字面表示及宽度
+        if len(arr) > 0:
+            num_first_str, num_first_width = get_num(arr[0])
         else:
-            # 需要省略部分数字
-            ELLIPSIS = "..."
+            num_first_str = ""
+            num_first_width = 0
 
-            # 剩余空间减去省略号长度
-            max_numlen -= len(ELLIPSIS)
+        # 最后一个数字的字面表示及宽度
+        if len(arr) > 1:
+            num_last_str = num_prefix + lut[arr[-1]] + num_suffix
+            num_last_width = num_prefix_width + fm.horizontalAdvance(num_last_str) + num_suffix_width
+        else:
+            num_last_str = ""
+            num_last_width = 0
 
-            # 一定要包含首位数字和末位数字
-            max_numlen = max_numlen - num_strlen - endnum_strlen
+        # 初始累计宽度。至少包含前后两个数字
+        total_width = arr_prefix_width + num_first_width \
+                      + num_last_width + arr_suffix_width
+        # str = total_str_0 + total_str_1
+        total_str_0 = self.arr_prefix + num_first_str
+        total_str_1 = num_last_str + self.arr_suffix
 
-            if max_numlen < 0:
-                # 连首尾数字都放不下，只显示省略号
-                result = self.arr_prefix + ELLIPSIS + self.arr_suffix
-                self.preview_textedit.setText(result)
-                return
+        elp = ELLIPSIS + self.num_split # ...,
+        elp_width = fm.horizontalAdvance(ELLIPSIS + elp) # ...,
 
-            # 剩余还能放多少个中间数字
-            max_nums = max_numlen // num_strlen
+        if len(arr) > 2:
+            for i in range(1, len(arr) - 2):
+                num_str, num_width = get_num(arr[i])
+                # 如果加上当前数字后，剩余宽度小于省略号宽度，则添加省略号之后退出
+                if total_width + num_width > max_width:
+                    total_str_0 += elp
+                  # total_width += elp_width
+                    break
+                # 否则，添加当前数字
+                total_width += num_width
+                total_str_0 += num_str
+        # 更新文本
+        self.preview_textedit.setText(total_str_0 + total_str_1)
+        return True
 
-            # 构建输出文本
-            result = self.arr_prefix
 
-            # 第一个数字
-            result += self.num_prefix + self.LUT[arr[0]] + self.num_suffix + self.num_split
-
-            # 省略号前的数字
-            for i in range(1, 1 + max_nums):
-                result += self.num_prefix + self.LUT[arr[i]] + self.num_suffix
-                if i != len(arr) - 1:  # 不是最后一个数字
-                    result += self.num_split
-
-            # 省略号
-            result += ELLIPSIS + self.num_split
-
-            # 最后一个数字
-            result += self.num_prefix + self.LUT[arr[-1]] + self.num_suffix
-
-            result += self.arr_suffix
-            self.preview_textedit.setText(result)
-        
-        # return False # 测试：隐藏预览框
