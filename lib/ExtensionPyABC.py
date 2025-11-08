@@ -9,6 +9,7 @@ from typing import Optional, TypeAlias
 from numpy import uint8
 from numpy.typing import NDArray
 from ctypes import CDLL, c_void_p, byref
+# import _ctypes
 
 from PySide6.QtWidgets import QWidget, QTextEdit
 
@@ -18,7 +19,9 @@ class OutPreviewTextEdit(QTextEdit):
         """获取等效单行显示宽度"""
         ...
 
-_CArgObject = type(byref(c_void_p(0)))
+_CArgObject: TypeAlias = type(byref(c_void_p(0))) # type: ignore
+
+# _CArgObject: TypeAlias = _ctypes._CArgObject
 
 CPointerArgType: TypeAlias = _CArgObject | c_void_p | int
 

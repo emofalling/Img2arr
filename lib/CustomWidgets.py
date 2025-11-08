@@ -149,9 +149,9 @@ class CustomUI:
             self.btn_auto.setVisible(False)
             # 刷新
             # self.__gpview_resizeEvent(None)
-            self.gpview.update()
+            self.gpview.resizeEvent(QResizeEvent(self.gpview.size(), self.gpview.size()))
         # 自动缩放事件（仅在autoscale为True时生效）
-        def __gpview_resizeEvent(self, _: QResizeEvent):
+        def __gpview_resizeEvent(self, e: QResizeEvent):
             # self = self_ref()
             # if self is None: return
             if self.autoscale:
@@ -170,7 +170,7 @@ class CustomUI:
                     off_y = (vrect.height() - srect.height()) / 2
                     self.gpview.translate(off_x, off_y)
             # 调用gpview的resizeEvent函数
-            QGraphicsView.resizeEvent(self.gpview, _)
+            QGraphicsView.resizeEvent(self.gpview, e)
         # 手动缩放事件（生效，且会使autoscale为False）
         def __gpview_wheelEvent(self, e: QWheelEvent):
             # self = self_ref()
@@ -221,7 +221,7 @@ class CustomUI:
             self.scene.setSceneRect(QRectF(0, 0, self.img_width, self.img_height))
 
             # 更新
-            self.gpview.update()
+            self.gpview.resizeEvent(QResizeEvent(self.gpview.size(), self.gpview.size()))
 
             # 刷新文本
             self.title.setText(f"{self.prefix}    {self.img_width}x{self.img_height}px")

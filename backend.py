@@ -20,9 +20,8 @@
         系统能够对它进行报错捕获（因此报错了不会污染主程序），而主程序能够将错误信息保存为日志文件并作为弹窗显示。注意：如果返回了SystemExit，则程序会弹窗申请用户是否需要退出标签页。
     控制台插件中(class)Main的exit函数(不是__del__!)会在扩展被取消选中时自动调用，不会捕获返回值（但同样会捕获异常）。
 """
-from numpy import ndarray, array, zeros, empty, uint8, intc, zeros_like
+import numpy
 from numpy.typing import NDArray
-from numpy import copyto as nparr_copyto
 
 from collections import namedtuple
 
@@ -32,18 +31,18 @@ import logging
 
 from PIL import Image # 以后会转而使用动态链接库而非PIL
 
-from ctypes import (Structure, CDLL, _Pointer, 
-                    string_at, byref, cast, create_string_buffer,
-                    POINTER, c_int, c_uint, c_char_p, c_void_p, c_uint8, c_size_t, c_bool
-)
+import ctypes
 
 import sys, os
 from types import ModuleType
+import typing
 from typing import Callable, Any, NewType, Sequence, Optional
-from typing import cast as cast_type
+
 import importlib.util
 import platform
 import json
+
+import traceback
 
 from lib.datatypes import JsonDataType
 
@@ -53,7 +52,7 @@ logger = logging.getLogger(os.path.basename(__file__))
 
 NULL = 0
 
-NULLPTR = cast(NULL, c_void_p)
+NULLPTR = ctypes.cast(NULL, ctypes.c_void_p)
 
 
 
@@ -87,17 +86,17 @@ if arch == "amd64":
 
     
 
-PlProcCore = CDLL(os.path.join(LIB_PATH, f"PlProcCore.{soext}"), use_errno=True, winmode=0)
+PlProcCore = ctypes.CDLL(os.path.join(LIB_PATH, f"PlProcCore.{soext}"), use_errno=True, winmode=0)
 """
 int SingleCore(char* caller, void* func, void* args, int *ret,
     uint8_t* in_buffer, uint8_t* out_buffer, 
     size_t in_shape[])
 """
 PlProcCore.SingleCore.argtypes = [
-    c_char_p, c_void_p, c_void_p, POINTER(c_int),
-    POINTER(c_uint8), POINTER(c_uint8), POINTER(c_size_t)
+    ctypes.c_char_p, ctypes.c_void_p, ctypes.c_void_p, ctypes.POINTER(ctypes.c_int),
+    ctypes.POINTER(ctypes.c_uint8), ctypes.POINTER(ctypes.c_uint8), ctypes.POINTER(ctypes.c_size_t)
 ]
-PlProcCore.SingleCore.restype = c_int
+PlProcCore.SingleCore.restype = ctypes.c_int
 """
 该函数已弃用
 int MultiCore_old(char* caller, size_t threadnum, void* func, void* args, int *ret,
@@ -105,33 +104,33 @@ int MultiCore_old(char* caller, size_t threadnum, void* func, void* args, int *r
     size_t in_shape[])
 """
 PlProcCore.MultiCore_old.argtypes = [
-    c_char_p, c_size_t, c_void_p, c_void_p, POINTER(c_int),
-    POINTER(c_uint8), POINTER(c_uint8), POINTER(c_size_t)
+    ctypes.c_char_p, ctypes.c_size_t, ctypes.c_void_p, ctypes.c_void_p, ctypes.POINTER(ctypes.c_int),
+    ctypes.POINTER(ctypes.c_uint8), ctypes.POINTER(ctypes.c_uint8), ctypes.POINTER(ctypes.c_size_t)
 ]
-PlProcCore.MultiCore.restype = c_int
+PlProcCore.MultiCore.restype = ctypes.c_int
 """
 size_t InitThreadPool(size_t threadnum)
 """
-PlProcCore.InitThreadPool.argtypes = [c_size_t]
-PlProcCore.InitThreadPool.restype = c_size_t
+PlProcCore.InitThreadPool.argtypes = [ctypes.c_size_t]
+PlProcCore.InitThreadPool.restype = ctypes.c_size_t
 """
 int MultiCore(char* caller, void* func, void* args, int *ret,
     uint8_t* in_buffer, uint8_t* out_buffer,
     size_t in_shape[])
 """
 PlProcCore.MultiCore.argtypes = [
-    c_char_p, c_void_p, c_void_p, POINTER(c_int),
-    POINTER(c_uint8), POINTER(c_uint8), POINTER(c_size_t)
+    ctypes.c_char_p, ctypes.c_void_p, ctypes.c_void_p, ctypes.POINTER(ctypes.c_int),
+    ctypes.POINTER(ctypes.c_uint8), ctypes.POINTER(ctypes.c_uint8), ctypes.POINTER(ctypes.c_size_t)
 ]
-PlProcCore.MultiCore.restype = c_int
+PlProcCore.MultiCore.restype = ctypes.c_int
 """
 void Exit()
 """
 PlProcCore.Exit.argtypes = []
 PlProcCore.Exit.restype = None
 
-def CDLLreadsig(ext: CDLL) -> str: # 读取动态链接库签名
-    return string_at(ext.img2arr_ext_sign).decode('utf-8', 'ignore')
+def CDLLreadsig(ext: ctypes.CDLL) -> str: # 读取动态链接库签名
+    return ctypes.string_at(ext.img2arr_ext_sign).decode('utf-8', 'ignore')
 
 def load_module_from_path(file_path, module_name) -> ExtensionPyABC.abcExt:
     """从文件路径导入模块"""
@@ -150,7 +149,7 @@ def load_module_from_path(file_path, module_name) -> ExtensionPyABC.abcExt:
         del sys.modules[module_name]
         raise ImportError(f"Loading module {module_name} from {file_path} failed: {e}")
     
-    return cast_type(ExtensionPyABC.abcExt, module)
+    return typing.cast(ExtensionPyABC.abcExt, module)
 
 EXT_TYPE_OPEN = 0
 EXT_TYPE_PREP = 1
@@ -170,7 +169,7 @@ EXT_PATH_MULTICORE = 1
 EXT_PATH_OPENCL = 2
 EXT_PATH_CUDA = 3
 
-ExtMain = tuple[dict[str, str], CDLL, ExtensionPyABC.abcExt | None, Any | None, None]
+ExtMain = tuple[dict[str, str], ctypes.CDLL, ExtensionPyABC.abcExt | None, Any | None, None]
 
 ExtItem = dict[str, 
             dict[str, 
@@ -217,8 +216,8 @@ def load_exts(loadf: Callable[[str], None], errf: Callable[[str, Exception], Non
                     continue
 
 
-                if new: # 如果是new的，需要初始化为一个足够长的列表
-                    reload_var[funci][ctype][extname] = ({}, None, None, None, None)
+                # if new: # 如果是new的，需要初始化为一个足够长的列表
+                    # reload_var[funci][ctype][extname] = ({}, None, None, None, None)
                 # reload_var_current = reload_var[funci][ctype][extname]
                 reload_var_new = [{}, None, None, None, None]
                 regname = f"img2arr.{funcname}.{ctype}.{extname}"
@@ -262,6 +261,7 @@ def load_exts(loadf: Callable[[str], None], errf: Callable[[str, Exception], Non
                         ext = _load_exts_cdll(path, regname_prefix, is_code_stage=(funci==EXT_TYPE_CODE))
                     except Exception as e:
                         errf(path, e)
+                        logger.warning(f"加载扩展 {regname} 失败: \n{traceback.format_exc()}")
                         continue
                     reload_var_new[EXT_OP_CDLL] = ext
 
@@ -283,16 +283,16 @@ def load_exts(loadf: Callable[[str], None], errf: Callable[[str, Exception], Non
                         ...
                 
                 # 赋值回去
-                reload_var[funci][ctype][extname] = cast_type(ExtMain, reload_var_new)
+                reload_var[funci][ctype][extname] = typing.cast(ExtMain, reload_var_new)
 
                                     
 
     return reload_var
 
-def _load_exts_cdll(file: str, regname_prefix: str, is_code_stage: bool = False) -> CDLL:
+def _load_exts_cdll(file: str, regname_prefix: str, is_code_stage: bool = False) -> ctypes.CDLL:
     """load_exts子函数：加载CDLL"""
     # 先加载
-    cdll = CDLL(file, use_errno=True, winmode=0)
+    cdll = ctypes.CDLL(file, use_errno=True, winmode=0)
     # 校验签名
     if not hasattr(cdll, "img2arr_ext_sign"):
         raise AttributeError(f"Cannot found variable \"char img2arr_ext_sign[]\"")
@@ -304,16 +304,16 @@ def _load_exts_cdll(file: str, regname_prefix: str, is_code_stage: bool = False)
     # int io_GetOutInfo(void* args, size_t in_shape[], size_t out_shape[], int* attr)
     if not hasattr(cdll, "io_GetOutInfo"):
         raise AttributeError(f"Cannot found function \"int io_GetOutInfo(void* args, size_t in_t, size_t in_h, size_t in_w, size_t* out_t, size_t* out_h, size_t* out_w, int* attr)\"")
-    cdll.io_GetOutInfo.restype = c_int
-    cdll.io_GetOutInfo.argtypes = [c_void_p, POINTER(c_size_t), POINTER(c_size_t), POINTER(c_int)]
+    cdll.io_GetOutInfo.restype = ctypes.c_int
+    cdll.io_GetOutInfo.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_size_t), ctypes.POINTER(ctypes.c_size_t), ctypes.POINTER(ctypes.c_int)]
 
     # 对于code阶段，还需要io_GetViewOutInfo
     # int io_GetViewOutInfo(void* args, size_t in_shape[ ], size_t out_shape[ ])
     if is_code_stage:
         if not hasattr(cdll, "io_GetViewOutInfo"):
             raise AttributeError(f"Cannot found function \"int io_GetViewOutInfo(void* args, size_t in_shape[ ], size_t out_shape[ ])\"")
-        cdll.io_GetViewOutInfo.restype = c_int
-        cdll.io_GetViewOutInfo.argtypes = [c_void_p, POINTER(c_size_t), POINTER(c_size_t)]
+        cdll.io_GetViewOutInfo.restype = ctypes.c_int
+        cdll.io_GetViewOutInfo.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_size_t), ctypes.POINTER(ctypes.c_size_t)]
 
     # 单核和多核至少有一个可用
     # 单核：int f0(void* args, uint8_t* int_buf, uint8_t* out_buf, size_t in_shape[])
@@ -325,11 +325,11 @@ def _load_exts_cdll(file: str, regname_prefix: str, is_code_stage: bool = False)
                         "\"int f1(size_t threads, size_t idx, void* args, uint8_t* in_buf, uint8_t* out_buf, size_t in_shape[])\""
         )
     if hasattr(cdll, "f0"):
-        cdll.f0.restype = c_int
-        cdll.f0.argtypes = [c_void_p, POINTER(c_uint8), POINTER(c_uint8), POINTER(c_size_t)]
+        cdll.f0.restype = ctypes.c_int
+        cdll.f0.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_uint8), ctypes.POINTER(ctypes.c_uint8), ctypes.POINTER(ctypes.c_size_t)]
     if hasattr(cdll, "f1"):
-        cdll.f1.restype = c_int
-        cdll.f1.argtypes = [c_size_t, c_size_t, c_void_p, POINTER(c_uint8), POINTER(c_uint8), POINTER(c_size_t)]
+        cdll.f1.restype = ctypes.c_int
+        cdll.f1.argtypes = [ctypes.c_size_t, ctypes.c_size_t, ctypes.c_void_p, ctypes.POINTER(ctypes.c_uint8), ctypes.POINTER(ctypes.c_uint8), ctypes.POINTER(ctypes.c_size_t)]
     # 对于code阶段，还需要f0p和f1p，其参数定义与f0和f1相同
     if is_code_stage:
         if not hasattr(cdll, "f0p") and not hasattr(cdll, "f1p"):
@@ -339,15 +339,15 @@ def _load_exts_cdll(file: str, regname_prefix: str, is_code_stage: bool = False)
                             "\"int f1p(size_t threads, size_t idx, void* args, uint8_t* in_buf, uint8_t* out_buf, size_t in_shape[])\""
             )
         if hasattr(cdll, "f0p"):
-            cdll.f0p.restype = c_int
-            cdll.f0p.argtypes = [c_void_p, POINTER(c_uint8), POINTER(c_uint8), POINTER(c_size_t)]
+            cdll.f0p.restype = ctypes.c_int
+            cdll.f0p.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_uint8), ctypes.POINTER(ctypes.c_uint8), ctypes.POINTER(ctypes.c_size_t)]
         if hasattr(cdll, "f1p"):
-            cdll.f1p.restype = c_int
-            cdll.f1p.argtypes = [c_size_t, c_size_t, c_void_p, POINTER(c_uint8), POINTER(c_uint8), POINTER(c_size_t)]
+            cdll.f1p.restype = ctypes.c_int
+            cdll.f1p.argtypes = [ctypes.c_size_t, ctypes.c_size_t, ctypes.c_void_p, ctypes.POINTER(ctypes.c_uint8), ctypes.POINTER(ctypes.c_uint8), ctypes.POINTER(ctypes.c_size_t)]
     if hasattr(cdll, "init"):
         # 初始化函数，启动时调用
         # int init(void)
-        cdll.init.restype = c_int
+        cdll.init.restype = ctypes.c_int
         cdll.init.argtypes = []
         # logger.debug("init()")
         ret = cdll.init()
@@ -355,7 +355,7 @@ def _load_exts_cdll(file: str, regname_prefix: str, is_code_stage: bool = False)
             raise RuntimeError(f"init() return {ret}")
     return cdll
 
-def _load_exts_ctlext(file: str, cdll: CDLL) -> ModuleType:
+def _load_exts_ctlext(file: str, cdll: ctypes.CDLL) -> ModuleType:
     """load_exts子函数：加载ctlext"""
     lib = load_module_from_path(file, "pyext")
 
@@ -407,29 +407,29 @@ class PIPENodeResult:
         pass
     proc_mode: int
     """处理模式.EXT_PATH_*。对于多线程，包含所有线程的返回值。对于单线程，类型为int"""
-    results: NDArray[intc] | int
+    results: NDArray[numpy.intc] | int
     """总返回值"""
     ret: int
 
 class MidBuffer:
     def __init__(self, arr: NDArray):
         self.arr = arr
-        self.arrptr: _Pointer[c_uint8]
+        self.arrptr: ctypes._Pointer[ctypes.c_uint8]
         self.readers: list[int] = []
         self.writers: list[int] = []
         self.update_ptr()
     def update_ptr(self):
-        self.arrptr = self.arr.ctypes.data_as(POINTER(c_uint8))
+        self.arrptr = self.arr.ctypes.data_as(ctypes.POINTER(ctypes.c_uint8))
     def resize(self, shape: Sequence[int], refcheck=False):
         self.arr.resize(shape, refcheck=refcheck)
         self.update_ptr()
 
-def call_processor(name: str, dll: CDLL, args: ExtensionPyABC.CPointerArgType, in_buf: MidBuffer, out_buf: MidBuffer | None, is_code_view: bool = False):
+def call_processor(name: str, dll: ctypes.CDLL, args: ExtensionPyABC.CPointerArgType, in_buf: MidBuffer, out_buf: MidBuffer | None, is_code_view: bool = False):
     """调用处理"""
     # 获取指针
     inbuf_ptr = in_buf.arrptr
     if out_buf is None:
-        outbuf_ptr = cast(0, POINTER(c_uint8))
+        outbuf_ptr = ctypes.cast(0, ctypes.POINTER(ctypes.c_uint8))
     else: 
         outbuf_ptr = out_buf.arrptr
     # 获取输入的shape
@@ -440,8 +440,8 @@ def call_processor(name: str, dll: CDLL, args: ExtensionPyABC.CPointerArgType, i
     else:
         # 多维数组：去掉最后一个维度（通常是通道维度）
         in_shape = in_buf.arr.shape[:-1]
-        in_shape_ct = (c_size_t * len(in_shape))(*in_shape)
-    in_shape_ct = (c_size_t * len(in_shape))(*in_shape)
+        in_shape_ct = (ctypes.c_size_t * len(in_shape))(*in_shape)
+    in_shape_ct = (ctypes.c_size_t * len(in_shape))(*in_shape)
     result = PIPENodeResult()
     if not is_code_view:
         f1_name = "f1"
@@ -456,9 +456,9 @@ def call_processor(name: str, dll: CDLL, args: ExtensionPyABC.CPointerArgType, i
     # 如果有多核，优先使用多核
     if hasattr(dll, f1_name):
         # 准备返回值列表，默认值全是0
-        ret_list = zeros(threads, dtype=intc)
+        ret_list = numpy.zeros(threads, dtype=numpy.intc)
         # 多核
-        ret = PlProcCore.MultiCore(bytes(name, "utf-8"), f1_func, args, ret_list.ctypes.data_as(POINTER(c_int)), 
+        ret = PlProcCore.MultiCore(bytes(name, "utf-8"), f1_func, args, ret_list.ctypes.data_as(ctypes.POINTER(ctypes.c_int)), 
                                    inbuf_ptr, outbuf_ptr, in_shape_ct)
         result.proc_mode = EXT_PATH_MULTICORE
         result.results = ret_list
@@ -466,8 +466,8 @@ def call_processor(name: str, dll: CDLL, args: ExtensionPyABC.CPointerArgType, i
     # 否则，尝试单核
     elif hasattr(dll, f0_name):
         logger.debug("Single Core")
-        ret_main = c_int(0)
-        ret = PlProcCore.SingleCore(bytes(name, "utf-8"), f0_func, args, byref(ret_main), 
+        ret_main = ctypes.c_int(0)
+        ret = PlProcCore.SingleCore(bytes(name, "utf-8"), f0_func, args, ctypes.byref(ret_main), 
                                     inbuf_ptr, outbuf_ptr, in_shape_ct)
         result.proc_mode = EXT_PATH_SINGLECORE
         result.results = ret_main.value
@@ -480,7 +480,7 @@ def call_processor(name: str, dll: CDLL, args: ExtensionPyABC.CPointerArgType, i
 class Img2arrPIPE:
     def __init__(self, imgf: str, extdc: ExtList):
         # 原图
-        self.img = array(Image.open(imgf).convert("RGBA"), dtype=uint8)
+        self.img = numpy.array(Image.open(imgf).convert("RGBA"), dtype=numpy.uint8)
         # reshape
         # self.img.shape = (self.img.shape[0], self.img.shape[1], self.img.shape[2])
         self.extdc = extdc
@@ -489,11 +489,11 @@ class Img2arrPIPE:
         # 预处理后的图片，copy原图
         self.pre = self.img.copy()
         # 编码后预览图片
-        self.code_view = zeros_like(self.img)
+        self.code_view = numpy.zeros_like(self.img)
         # 编码输出
-        self.code_out = empty((0,), dtype=uint8)
+        self.code_out = numpy.empty((0,), dtype=numpy.uint8)
         # 输出
-        self.out = empty((0,), dtype=uint8)
+        self.out = numpy.empty((0,), dtype=numpy.uint8)
 
     def Pre(self, i: int, empty: bool = False):
         """预处理。返回一个一次性迭代器  
@@ -509,18 +509,20 @@ class Img2arrPIPE:
                 it.pre_resized = True
             else:
                 it.pre_resized = False
-            nparr_copyto(self.pre, self.img, casting="no")
+            numpy.copyto(self.pre, self.img, casting="no")
         return it
-    def CodeView(self, name: str, args: ExtensionPyABC.CPointerArgType, argslen: int) -> tuple[PIPENodeResult, bool]:
-        """编码预览图刷新。返回处理结果和code_view尺寸是否更新的标志"""
+    def CodeView(self, name: str, args: ExtensionPyABC.CPointerArgType, argslen: int, in_arr: Optional[NDArray[numpy.uint8]] = None) -> tuple[PIPENodeResult, bool]:
+        """编码预览图刷新。返回处理结果和code_view尺寸是否更新的标志。若未指定in_arr，则使用pre"""
         assert name != "", "编码器名称不能为空"
         view_updated = False
+        if in_arr is None:
+            in_arr = self.pre
         # 获取对应名称编码器的动态链接库
         dll = self.extdc[EXT_TYPE_CODE]["img"][name][EXT_OP_CDLL]
         # 调用io_GetViewOutInfo获取输出尺寸
-        out_shape_ct = (c_size_t * 2)()
-        in_shape = self.pre.shape[:-1]
-        in_shape_ct = (c_size_t * len(in_shape))(*in_shape)
+        out_shape_ct = (ctypes.c_size_t * 2)()
+        in_shape = in_arr.shape[:-1]
+        in_shape_ct = (ctypes.c_size_t * len(in_shape))(*in_shape)
         ret = dll.io_GetViewOutInfo(args, in_shape_ct, out_shape_ct)
         if ret != 0: 
             raise RuntimeError(f"io_GetViewOutInfo返回错误码{ret}")
@@ -530,7 +532,7 @@ class Img2arrPIPE:
             self.code_view.resize(out_shape, refcheck=False)
             view_updated = True
         # 调用编码器
-        result = call_processor(name, dll, args, MidBuffer(self.pre), MidBuffer(self.code_view), is_code_view=True)
+        result = call_processor(name, dll, args, MidBuffer(in_arr), MidBuffer(self.code_view), is_code_view=True)
         # 返回结果
         return result, view_updated
     def Code(self, name: str, args: ExtensionPyABC.CPointerArgType, argslen: int) -> PIPENodeResult:
@@ -539,11 +541,11 @@ class Img2arrPIPE:
         # 获取对应名称编码器的动态链接库
         dll = self.extdc[EXT_TYPE_CODE]["img"][name][EXT_OP_CDLL]
         # 调用io_GetOutInfo获取输出尺寸
-        out_shape_ct = (c_size_t * 1)()
+        out_shape_ct = (ctypes.c_size_t * 1)()
         in_shape = self.pre.shape
-        in_shape_ct = (c_size_t * len(in_shape))(*in_shape)
-        attr = c_int(0)
-        ret = dll.io_GetOutInfo(args, in_shape_ct, out_shape_ct, byref(attr))
+        in_shape_ct = (ctypes.c_size_t * len(in_shape))(*in_shape)
+        attr = ctypes.c_int(0)
+        ret = dll.io_GetOutInfo(args, in_shape_ct, out_shape_ct, ctypes.byref(attr))
         if ret != 0:
             raise RuntimeError(f"io_GetOutInfo返回错误码{ret}")
         # resize到输出尺寸（如果需要的话）
@@ -560,11 +562,11 @@ class Img2arrPIPE:
         # 获取对应名称输出器的动态链接库
         dll = self.extdc[EXT_TYPE_OUT]["img"][name][EXT_OP_CDLL]
         # 调用io_GetOutInfo获取输出尺寸
-        out_shape_ct = (c_size_t * 1)()
+        out_shape_ct = (ctypes.c_size_t * 1)()
         in_shape = self.code_out.shape
-        in_shape_ct = (c_size_t * len(in_shape))(*in_shape)
-        attr = c_int(0)
-        ret = dll.io_GetOutInfo(args, in_shape_ct, out_shape_ct, byref(attr))
+        in_shape_ct = (ctypes.c_size_t * len(in_shape))(*in_shape)
+        attr = ctypes.c_int(0)
+        ret = dll.io_GetOutInfo(args, in_shape_ct, out_shape_ct, ctypes.byref(attr))
         if ret != 0:
             raise RuntimeError(f"io_GetOutInfo返回错误码{ret}")
         # resize到输出尺寸（如果需要的话）
@@ -584,7 +586,7 @@ class Img2arrPIPE:
 
         
 class Pre_iter:
-    def __init__(self, extdc: ExtList, img: NDArray[uint8], img_pre_buf: list[MidBuffer], pre: NDArray[uint8], i: int):
+    def __init__(self, extdc: ExtList, img: NDArray[numpy.uint8], img_pre_buf: list[MidBuffer], pre: NDArray[numpy.uint8], i: int):
         # print("----")
         self.extdc = extdc
         self.img = MidBuffer(img)
@@ -655,7 +657,7 @@ class Pre_iter:
         shape_ = (*shape, 4)
         self.cur_buf_index += 1
         if self.cur_buf_index >= len(self.img_pre_buf):
-            self.img_pre_buf.append(MidBuffer(empty(shape_, dtype=uint8)))
+            self.img_pre_buf.append(MidBuffer(numpy.empty(shape_, dtype=numpy.uint8)))
         buf = self.img_pre_buf[self.cur_buf_index]
         arr = buf.arr
         # 如果shape对不上，则resize
@@ -710,15 +712,15 @@ class Pre_iter:
             # int io_GetOutInfo(void* args, size_t in_t, size_t in_h, size_t in_w, size_t* out_t, size_t* out_h, size_t* out_w, int* attr)
             if not hasattr(dll, "io_GetOutInfo"):
                 raise AttributeError("Cannot found function \"int io_GetOutInfo(void* args, size_t in_t, size_t in_h, size_t in_w, size_t* out_t, size_t* out_h, size_t* out_w, int* attr)\" in ext")
-            out_shape_ct = (c_size_t * 2)() # 未来会更改shape数
-            out_attr = c_int(0)
+            out_shape_ct = (ctypes.c_size_t * 2)() # 未来会更改shape数
+            out_attr = ctypes.c_int(0)
 
             # 获取输入的shape
             in_shape = in_buf.arr.shape[:-1]
-            in_shape_ct = (c_size_t * len(in_shape))(*in_shape)
+            in_shape_ct = (ctypes.c_size_t * len(in_shape))(*in_shape)
 
             ret = dll.io_GetOutInfo(args, in_shape_ct,
-                                    out_shape_ct, byref(out_attr))
+                                    out_shape_ct, ctypes.byref(out_attr))
             if ret != 0:
                 raise AttributeError(f"Cannot get out info from ext, returned {ret}")
             out_shape = tuple(out_shape_ct)
@@ -741,7 +743,7 @@ class Pre_iter:
             # 申请一个buf，并将self.img复制过去
             in_buf = self.next_buf(in_shape)
             in_buf_name = str(self.cur_buf_index)
-            nparr_copyto(in_buf.arr, self.img.arr, "no")
+            numpy.copyto(in_buf.arr, self.img.arr, "no")
             self.add_buf_writer(self.i)
             self.add_buf_reader(self.i)
 
@@ -761,7 +763,7 @@ class Pre_iter:
             # 如果最后一项恰是只读扩展，则手动将current_buf复制到pre，且没有out_buf
             if out_attr == PRE_ATTRS.ATTR_READONLY:
                 out_buf = None
-                nparr_copyto(self.pre.arr, self.current_buf().arr, "no")
+                numpy.copyto(self.pre.arr, self.current_buf().arr, "no")
         else:
             # print(f"Attr for {name}: {out_attr}")
             if out_attr == PRE_ATTRS.ATTR_REUSE and not is_head:
@@ -795,7 +797,7 @@ class Pre_iter:
         else: # 空扩展，直接复制
             if out_buf is not None:
                 if in_buf.arrptr != out_buf.arrptr: # 开始复制
-                    nparr_copyto(out_buf.arr, in_buf.arr, "no")
+                    numpy.copyto(out_buf.arr, in_buf.arr, "no")
                 else: # 不用复制
                     pass
             else:

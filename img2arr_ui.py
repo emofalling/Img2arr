@@ -42,9 +42,10 @@ from itertools import islice
 
 from typing import (
     Callable, Optional, Sequence,
-    TypeVar, 
-    cast
+    TypeVar,
 )
+
+import typing
 
 from lib.CustomWidgets import (
     CustomUI, CustomBrush
@@ -53,6 +54,9 @@ from lib.CustomWidgets import (
 from lib import ExtensionPyABC
 
 from lib.datatypes import JsonDataType
+
+import numpy
+from numpy.typing import NDArray
 
 import backend  # 后端
 
@@ -302,7 +306,7 @@ class WinMain(QObject):
             logging.warning("设备配置错误，将使用默认设备: [0, 1, 2, 3]")
             devices = DEVICES_DEFAULT
 
-        self.ext = backend.load_exts(loadf, errf, reload_feautures=cast(Sequence[int], devices)) # pylance ***
+        self.ext = backend.load_exts(loadf, errf, reload_feautures=typing.cast(Sequence[int], devices)) # pylance ***
     
     def NewPageMain(self, file: str, pipe: backend.Img2arrPIPE):
         # 通知接收函数：创建PageMain
@@ -311,7 +315,7 @@ class WinMain(QObject):
         # 切换到此tab
         self.tabwdg.setCurrentIndex(id)
         
-    def openfiles(self):
+    def openfiles(self):#
         """打开文件"""
         FILTERS = [
             "All Files (*)",
@@ -486,6 +490,8 @@ class PageMain(QWidget):
         self.out_name = ""
         # 输出器py部分。当有新的输出器被选择时，会覆盖为新的输出器py部分或None。
         self.out_py: ExtensionPyABC.abcExt.UI | None = None
+        # 供给输出器的self.pipe.pre的副本。避免潜在的内存泄漏.
+        self.pre_copy: NDArray | None = None
 
 
         # 预处理器线程
@@ -831,11 +837,13 @@ class PageMain(QWidget):
         self.out_preview.setLineWrapMode(QTextEdit.LineWrapMode.WidgetWidth)
         self.out_preview.setWordWrapMode(QTextOption.WrapMode.WrapAnywhere)
         self.out_preview_layout.addWidget(self.out_preview)
-        # 如果有Consolas，则使用Consolas字体
+        # 选择字体
         if "Consolas" in QFontDatabase.families():
             self.out_preview.setFont(QFont("Consolas"))
         elif "Courier" in QFontDatabase.families():
             self.out_preview.setFont(QFont("Courier"))
+        elif "Monospace" in QFontDatabase.families():
+            self.out_preview.setFont(QFont("Monospace"))
 
         # 默认隐藏
         self.out_preview_widget.setVisible(False)
@@ -1139,6 +1147,11 @@ class PageMain(QWidget):
                     break
                 time_calc_end = time.perf_counter()
                 if view_realtime_update:
+                    # 为了确保下一次更新时不会因上一次的内存范围缩小而导致段错误，所以刷新界面显示务必先复制一层内存
+                    if self.pre_copy is None or resized:
+                        self.pre_copy = self.pipe.pre.copy()
+                    else:
+                        numpy.copyto(self.pre_copy, self.pipe.pre, 'no')
                     self.PreOutViewUpdateSignal.signal.emit((True, time_calc_end - time_calc_start, resized))
                     resized = False # 重置，防止多次更新
                     # 刷新编码
@@ -1150,6 +1163,10 @@ class PageMain(QWidget):
                 # 成功
 
                 if not view_realtime_update:
+                    if self.pre_copy is None or resized:
+                        self.pre_copy = self.pipe.pre.copy()
+                    else:
+                        numpy.copyto(self.pre_copy, self.pipe.pre, 'no')
                     self.PreOutViewUpdateSignal.signal.emit((True, time_calc_end - time_calc_start, resized))
                     # 刷新编码
                     self.code_is_need_update = True
@@ -1165,6 +1182,7 @@ class PageMain(QWidget):
 
     def PreUpdateOutViewer(self, update_view: bool, t: float | int | str, resized: bool):
         """更新预处理输出"""
+        arr = self.pre_copy
         if t == -1:
             t_str = "正在计算…"
         elif isinstance(t, str):
@@ -1175,9 +1193,11 @@ class PageMain(QWidget):
         # 选择更新方式
         time_update_start = time.perf_counter()
         if update_view:
-            if resized:
+            if arr is None:
+                logger.error("update_view为True，但arr为None")
+            elif resized:
                 # 数组尺寸发生变化，需要重新加载
-                self.pre_out_viewer.update_arr(self.pipe.pre)
+                self.pre_out_viewer.update_arr(arr)
             else:
                 self.pre_out_viewer.update_()
         time_update_end = time.perf_counter()
@@ -1189,7 +1209,10 @@ class PageMain(QWidget):
             mem_size += buf.arr.nbytes
         autofmt_memsize, autofmt_memsize_unit = AutoFmtSize(mem_size)
         self.pre_top_widget.setToolTip(f"计算耗时：{t_str}\n更新耗时：{AutoFmtTime(time_update_end - time_update_start)}\n中间缓冲区：{mid_buf_len} 个, {autofmt_memsize:.2f} {autofmt_memsize_unit}")
-
+        # 如果self.out_name为空，解除self.pre_copy对数组副本的引用
+        if not self.out_name:
+            # self.pre_copy = None
+            pass
 
 
     def Pre_Delete(self, index: int):
@@ -1342,7 +1365,11 @@ class PageMain(QWidget):
         else:
             args, arglen = backend.NULLPTR, 0
         # 调用编码预览
-        ret = self.pipe.CodeView(self.code_name, args, arglen)
+        arr = self.pre_copy
+        if arr is None:
+            logger.error("arr 为 None")
+            return False, False
+        ret = self.pipe.CodeView(self.code_name, args, arglen, arr)
         # 调用py的update_end（如果有）
         if self.code_py is not None and hasattr(self.code_py, "update_end"):
             try:
@@ -1381,12 +1408,12 @@ class PageMain(QWidget):
                     break
                 time_calc_end = time.perf_counter()
                 if view_realtime_update:
-                    self.CodeViewerOutViewUpdateSignal.signal.emit((True, time_calc_end - time_calc_start, resized))
+                    self.CodeViewerOutViewUpdateSignal.signal.emit((True, time_calc_end - time_calc_start, resized, self.pipe.code_view.copy()))
                     resized = False # 重置，防止多次更新
             else:
                 # 成功
                 if not view_realtime_update:
-                    self.CodeViewerOutViewUpdateSignal.signal.emit((True, time_calc_end - time_calc_start, resized))
+                    self.CodeViewerOutViewUpdateSignal.signal.emit((True, time_calc_end - time_calc_start, resized, self.pipe.code_view.copy()))
                 continue
             # 失败
             if not view_realtime_update:
@@ -1394,7 +1421,7 @@ class PageMain(QWidget):
         
         logger.info("编码刷新线程 结束")
     
-    def CodeUpdateOutViewer(self, update_view: bool, t: float | int | str, resized: bool):
+    def CodeUpdateOutViewer(self, update_view: bool, t: float | int | str, resized: bool, arr: Optional[NDArray] = None):
         if t == -1:
             t_str = "正在计算…"
         elif isinstance(t, str):
@@ -1405,11 +1432,14 @@ class PageMain(QWidget):
         # 选择更新方式
         time_update_start = time.perf_counter()
         if update_view:
-            if resized:
+            if arr is None:
+                logger.error("update_view为True，但arr为None")
+            elif resized:
                 # 数组尺寸发生变化，需要重新加载
-                self.code_out_viewer.update_arr(self.pipe.code_view)
+                self.code_out_viewer.update_arr(arr)
             else:
-                self.code_out_viewer.update_()
+                # self.code_out_viewer.update_()
+                self.code_out_viewer.update_arr(arr)
         time_update_end = time.perf_counter()
         # 创建提示文本
         self.code_top_widget.setToolTip(f"计算耗时：{t_str}\n更新耗时：{AutoFmtTime(time_update_end - time_update_start)}")
@@ -1766,8 +1796,8 @@ if __name__ == "__main__":
     # 设置风格
     # app.setStyle("Fusion")
     # 设置第三方风格
-    from qt_material import apply_stylesheet
-    apply_stylesheet(app, theme='dark_teal.xml')
+    # from qt_material import apply_stylesheet
+    # apply_stylesheet(app, theme='dark_teal.xml')
     win = QMainWindow()
 
     main = WinMain(app, win) # 直接调用WinMain会导致事件函数无法绑定
