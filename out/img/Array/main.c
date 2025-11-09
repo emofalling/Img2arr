@@ -118,13 +118,13 @@ SHARED int io_GetOutInfo(args_t* args, size_t in_shape[1], size_t out_shape[1], 
             args->num_str_len +     // 数字字符串长度
             args->num_suffix_len    // 数字后缀
         ) * in_shape[0] +          // 乘以元素个数
-        args->num_split_len * ((in_shape[0] > 0) ? (in_shape[0] - 1) : 0) +  // 安全的分隔符计算
+        args->num_split_len * ((likely(in_shape[0] > 0)) ? (in_shape[0] - 1) : 0) +  // 安全的分隔符计算
         args->arr_suffix_len;      // 数组后缀
     return 0;
 }
 
 /**
- * @brief 主函数：单线程实现。
+ * @brief 主函数: 单线程实现。
  * Single-threaded implementation.
  * @param args[in/out] 参数解析结构体。
  * Parameter parsing structure.

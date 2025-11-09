@@ -23,7 +23,7 @@
 
 volatile const char DEFINE[] = "This a custom library for parallel processing, use for img2arr project.";
 
-using SingleCoreFunc = int(*)(void* args, uint8_t* int_buf, uint8_t* out_buf, size_t in_shape[]);
+using SingleCoreFunc = int(*)(void* args, uint8_t* int_buf, uint8_t* out_buf, size_t in_shape[]); 
 using MultiCoreFunc = int(*)(size_t threads, size_t idx, void* args, uint8_t* in_buf, uint8_t* out_buf, size_t in_shape[]);
 
 // 核心。返回值：

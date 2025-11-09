@@ -195,7 +195,6 @@ class WinMain(QObject):
 
         # 在窗口加载后，线程加载扩展
         QTimer.singleShot(0, lambda: Thread(target=self.Load, daemon=True).start())
-        self.win.show()
     def setwindow(self):
         """设置窗体属性"""
         # 标题
@@ -444,6 +443,7 @@ class WinMain(QObject):
         # 创建线程，但不daemon
         self.close_thread = Thread(target=self.Close, args=(event,))
         self.close_thread.start()
+        QMainWindow.closeEvent(self.win, event)
     def Close(self, event: QCloseEvent):
         """当窗口关闭时，要执行的函数。在别的线程中执行"""
         # 保存当前窗口的位置
@@ -474,6 +474,8 @@ class PageMain(QWidget):
         # 预处理输出预览更新信号
         self.PreOutViewUpdateSignal = Signals.SignalTuple()
         self.PreOutViewUpdateSignal.signal.connect(lambda args: self.PreUpdateOutViewer(*args) if (self := self_ref()) else logger.error("资源管理错误: self_ref() 返回 None"))
+        # 供给转码器的self.pipe.pre的副本。避免潜在的内存泄漏.
+        self.pre_copy: NDArray | None = None
         
         # 编码器名称。空字符串表示未选择编码器
         self.code_name = ""
@@ -490,8 +492,6 @@ class PageMain(QWidget):
         self.out_name = ""
         # 输出器py部分。当有新的输出器被选择时，会覆盖为新的输出器py部分或None。
         self.out_py: ExtensionPyABC.abcExt.UI | None = None
-        # 供给输出器的self.pipe.pre的副本。避免潜在的内存泄漏.
-        self.pre_copy: NDArray | None = None
 
 
         # 预处理器线程
@@ -1801,6 +1801,7 @@ if __name__ == "__main__":
     win = QMainWindow()
 
     main = WinMain(app, win) # 直接调用WinMain会导致事件函数无法绑定
+    win.show()
     sys.exit(app.exec())
 else:
     import img2arr # 加载命令行版本

@@ -46,7 +46,7 @@ import traceback
 
 from lib.datatypes import JsonDataType
 
-from lib import ExtensionPyABC
+from lib import ExtensionPyABC, SpecialArch
 
 logger = logging.getLogger(os.path.basename(__file__))
 
@@ -80,13 +80,12 @@ elif system == "linux": soext = "so"
 elif system == "darwin": soext = "dylib"
 else: raise ImportError("Unsupported system: " + system)
 # 获取CPU架构（小写）
-arch = platform.machine().lower()
-if arch == "amd64":
-    arch = "x86_64"
+arch = platform.machine()
+arch = SpecialArch.GetNormalArchName(arch)
 
-    
+PlProcCoreName = f"PlProcCore_{system}_{arch}.{soext}"
 
-PlProcCore = ctypes.CDLL(os.path.join(LIB_PATH, f"PlProcCore.{soext}"), use_errno=True, winmode=0)
+PlProcCore = ctypes.CDLL(os.path.join(LIB_PATH, PlProcCoreName), use_errno=True, winmode=0)
 """
 int SingleCore(char* caller, void* func, void* args, int *ret,
     uint8_t* in_buffer, uint8_t* out_buffer, 
