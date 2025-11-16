@@ -25,7 +25,7 @@
 
 // 签名: 验证扩展是否加载正确
 // Sign: Verify that the extension is loaded correctly
-SHARED const char img2arr_ext_sign[] = "img2arr.<stage>.<type>.<name>";
+SHARED const char img2arr_ext_sign[] = "img2arr.code.img.Common Format Set";
 
 // 扩展属性enum。用于为管线进行特化提示，以进行优化。仅预处理阶段使用。
 // Extension attribute enum. Used to specialize the pipeline for optimization. Only used in the preprocessing stage.
@@ -61,12 +61,22 @@ SHARED int init(void){
     return 0;
 }
 
+enum mode{
+    RGB565 = 1,
+    RGB332,
+};
+
 // ext.py传入的参数解析结构体。可以作为处理结果输出。
 // The parameter parsing structure passed in by ext.py. It can be used as the output of the processing result.
 typedef struct {
     // 这里填写参数列表
     // Fill in the output parameter list here
+
+    // mode 转换模式
+    int mode;
 }__attribute__((packed)) args_t;
+
+#include <stdio.h> //删
 
 /**
  * @brief 获取输出数据信息。在调用`f0`或`f1`之前会被调用以确认输出缓冲区大小及其属性.
@@ -82,13 +92,21 @@ typedef struct {
  * @return 错误码，0表示成功，非0表示失败。若函数无返回，则返回随机值，容易导致错误。
  * Error code, 0 means success, non-0 means failure. If the function has no return, it returns a random value, which is easy to cause errors.
  */
-SHARED int io_GetOutInfo(args_t* args, size_t in_shape[ ], size_t out_shape[ ], int* attr){
+SHARED int io_GetOutInfo(args_t* args, size_t in_shape[2], size_t out_shape[1], int* attr){
     // 指定输出的尺寸及其属性
     // Specify the size and attributes of the output
-    // const size_t height = in_shape[0];
-    // const size_t width = in_shape[1];
-    // out_shape[0] = height;
-    // out_shape[1] = width;
+    const size_t height = in_shape[0];
+    const size_t width = in_shape[1];
+    switch(args->mode){
+        case RGB565:
+            out_shape[0] = height * width * 2;
+            break;
+        case RGB332:
+            out_shape[0] = height * width * 1;
+            break;
+        default:
+            return -1;
+    }
     // *attr = ATTR_NONE;
     // Other Implement here.
     return 0;
@@ -106,36 +124,63 @@ SHARED int io_GetOutInfo(args_t* args, size_t in_shape[ ], size_t out_shape[ ], 
  * @return 错误码，0表示成功，非0表示失败。若函数无返回，则返回随机值
  * Error code, 0 means success, non-0 means failure. If the function has no return, it returns a random value
  */
-SHARED int io_GetViewOutInfo(args_t* args, size_t in_shape[ ], size_t out_shape[ ]){
+SHARED int io_GetViewOutInfo(args_t* args, size_t in_shape[2], size_t out_shape[2]){
     // 指定输出的尺寸及其属性
     // Specify the size and attributes of the output
-    // const size_t height = in_shape[0];
-    // const size_t width = in_shape[1];
-    // out_shape[0] = height;
-    // out_shape[1] = width;
+    const size_t height = in_shape[0];
+    const size_t width = in_shape[1];
+    out_shape[0] = height;
+    out_shape[1] = width;
     // *attr = ATTR_NONE;
     // Other Implement here.
     return 0;
 }
 
-/**
- * @brief 主函数：单线程实现。
- * Single-threaded implementation.
- * @param args[in/out] 参数解析结构体。
- * Parameter parsing structure.
- * @param in_buf[in] 输入缓冲区，格式为`[*in_shape, 4]`。
- * Input buffer, format is `[*in_shape, 4]`.
- * @param out_buf[out] 输出缓冲区。大小由`io_GetOutInfo`指定。
- * Output buffer. The size is specified by `io_GetOutInfo`.
- * @param in_shape[in] 输入缓冲区形状。关于具体内容，参考下面的注释说明。
- * Input buffer shape. For specific content, refer to the comment description below.
- * @return 错误码，0表示成功，非0表示失败。若函数无返回，则可能返回随机值
- * Error code, 0 means success, non-0 means failure. If the function has no return, it may return a random value.
- */
-SHARED int f0(args_t* args, uint8_t* in_buf, uint8_t* out_buf, size_t in_shape[ ]){
-    // Implement here.
-    return 0;
+static void rgba8888_to_rgb565(uint8_t* in, uint8_t* out, size_t start, size_t end){
+    for(size_t i = start * 4, o = start * 2; i < end * 4; i += 4, o += 2){
+        uint8_t r = in[i + 0];
+        uint8_t g = in[i + 1];
+        uint8_t b = in[i + 2];
+        out[o + 0] = ( r & 0b11111000      ) | (g /* & 0b11100000 */) >> 5;
+        out[o + 1] = ((g & 0b00011100) << 3) | (b /* & 0b11111000 */) >> 3;
+    }
 }
+
+static void rgba8888_to_rgb565_preview(uint8_t* in, uint8_t* out, size_t start, size_t end){
+    for(size_t i = start * 4; i < end * 4; i += 4){
+        uint8_t r = in[i + 0];
+        uint8_t g = in[i + 1];
+        uint8_t b = in[i + 2];
+        out[i + 0] = (r & 0b11111000) | (r >> 5);
+        out[i + 1] = (g & 0b11111100) | (g >> 6);
+        out[i + 2] = (b & 0b11111000) | (b >> 5);
+        out[i + 3] = 255;
+    }
+}
+
+static void rgba8888_to_rgb332(uint8_t* in, uint8_t* out, size_t start, size_t end){
+    for(size_t i = start * 4, o = start * 1; i < end * 4; i += 4, o += 1){
+        uint8_t r = in[i + 0];
+        uint8_t g = in[i + 1];
+        uint8_t b = in[i + 2];
+        out[o] = (r & 0b11100000)      | 
+                 (g & 0b11100000) >> 3 |
+                 (b & 0b11000000) >> 6;
+    }
+}
+
+static void rgba8888_to_rgb332_preview(uint8_t* in, uint8_t* out, size_t start, size_t end){
+    for(size_t i = start * 4; i < end * 4; i += 4){
+        uint8_t r = in[i + 0];
+        uint8_t g = in[i + 1];
+        uint8_t b = in[i + 2];
+        out[i + 0] = (r & 0b11100000) | (r & 0b11100000) >> 3 | (r /* & 0b11100000 */) >> 6;
+        out[i + 1] = (g & 0b11100000) | (g & 0b11100000) >> 3 | (g /* & 0b11100000 */) >> 6;
+        out[i + 2] = (b & 0b11000000) | (b & 0b11000000) >> 2 | (b & 0b11000000) >> 4 | (b /* & 0b11000000 */) >> 6;
+        out[i + 3] = 255;
+    }
+}
+
 
 /**
  * @brief 主函数：多线程实现。
@@ -155,33 +200,43 @@ SHARED int f0(args_t* args, uint8_t* in_buf, uint8_t* out_buf, size_t in_shape[ 
  * @return 错误码，0表示成功，非0表示失败。若函数无返回，则可能返回随机值
  * Error code, 0 means success, non-0 means failure. If the function has no return, it may return a random value.
  */
-SHARED int f1(size_t threads, size_t idx, args_t* args, uint8_t* in_buf, uint8_t* out_buf, size_t in_shape[ ]){
+SHARED int f1(size_t threads, size_t idx, args_t* args, uint8_t* in_buf, uint8_t* out_buf, size_t in_shape[2]){
     // 计算该线程处理的像素点范围。如果需要特殊需求，请自行修改。
     // Calculate the pixel range processed by this thread. If you need special requirements, please modify it yourself.
     const size_t size = in_shape[0] * in_shape[1];
     const size_t start = (size * idx / threads);
     const size_t end = (size * (idx + 1) / threads);
     // Implement here. If no return
+    switch(args->mode){
+        case RGB565:
+            rgba8888_to_rgb565(in_buf, out_buf, start, end);
+            break;
+        case RGB332:
+            rgba8888_to_rgb332(in_buf, out_buf, start, end);
+            break;
+        default:
+            return -1;
+    }
     return 0;
 }
 
 /**
- * @brief 预览图像函数：单线程实现。仅在编码阶段扩展中有效。
+ * @brief 主函数：单线程实现。
  * Single-threaded implementation.
  * @param args[in/out] 参数解析结构体。
  * Parameter parsing structure.
  * @param in_buf[in] 输入缓冲区，格式为`[*in_shape, 4]`。
  * Input buffer, format is `[*in_shape, 4]`.
- * @param out_buf[out] 输出缓冲区。大小由`io_GetViewOutInfo`指定。
- * Output buffer. The size is specified by `io_GetViewOutInfo`.
+ * @param out_buf[out] 输出缓冲区。大小由`io_GetOutInfo`指定。
+ * Output buffer. The size is specified by `io_GetOutInfo`.
  * @param in_shape[in] 输入缓冲区形状。关于具体内容，参考下面的注释说明。
  * Input buffer shape. For specific content, refer to the comment description below.
  * @return 错误码，0表示成功，非0表示失败。若函数无返回，则可能返回随机值
  * Error code, 0 means success, non-0 means failure. If the function has no return, it may return a random value.
  */
-SHARED int f0p(args_t* args, uint8_t* in_buf, uint8_t* out_buf, size_t in_shape[ ]){
+SHARED int f0(args_t* args, uint8_t* in_buf, uint8_t* out_buf, size_t in_shape[2]){
     // Implement here.
-    return 0;
+    return f1(1, 0, args, in_buf, out_buf, in_shape);
 }
 
 /**
@@ -202,16 +257,44 @@ SHARED int f0p(args_t* args, uint8_t* in_buf, uint8_t* out_buf, size_t in_shape[
  * @return 错误码，0表示成功，非0表示失败。若函数无返回，则可能返回随机值
  * Error code, 0 means success, non-0 means failure. If the function has no return, it may return a random value.
  */
-SHARED int f1p(size_t threads, size_t idx, args_t* args, uint8_t* in_buf, uint8_t* out_buf, size_t in_shape[ ]){
+SHARED int f1p(size_t threads, size_t idx, args_t* args, uint8_t* in_buf, uint8_t* out_buf, size_t in_shape[2]){
     // 计算该线程处理的像素点范围。如果需要特殊需求，请自行修改。
     // Calculate the pixel range processed by this thread. If you need special requirements, please modify it yourself.
     const size_t size = in_shape[0] * in_shape[1];
     const size_t start = (size * idx / threads);
     const size_t end = (size * (idx + 1) / threads);
     // Implement here.
+    switch(args->mode){
+        case RGB565:
+            rgba8888_to_rgb565_preview(in_buf, out_buf, start, end);
+            break;
+        case RGB332:
+            rgba8888_to_rgb332_preview(in_buf, out_buf, start, end);
+            break;
+        default:
+            return -1;
+    }
     return 0;
 }
 
+/**
+ * @brief 预览图像函数：单线程实现。仅在编码阶段扩展中有效。
+ * Single-threaded implementation.
+ * @param args[in/out] 参数解析结构体。
+ * Parameter parsing structure.
+ * @param in_buf[in] 输入缓冲区，格式为`[*in_shape, 4]`。
+ * Input buffer, format is `[*in_shape, 4]`.
+ * @param out_buf[out] 输出缓冲区。大小由`io_GetViewOutInfo`指定。
+ * Output buffer. The size is specified by `io_GetViewOutInfo`.
+ * @param in_shape[in] 输入缓冲区形状。关于具体内容，参考下面的注释说明。
+ * Input buffer shape. For specific content, refer to the comment description below.
+ * @return 错误码，0表示成功，非0表示失败。若函数无返回，则可能返回随机值
+ * Error code, 0 means success, non-0 means failure. If the function has no return, it may return a random value.
+ */
+SHARED int f0p(args_t* args, uint8_t* in_buf, uint8_t* out_buf, size_t in_shape[2]){
+    // Implement here.
+    return f1p(1, 0, args, in_buf, out_buf, in_shape);
+}
 /*
 缓冲区形状说明：
     缓冲区分为图像缓冲区、数据缓冲区，未来可能会进一步增加。

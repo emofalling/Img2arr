@@ -21,7 +21,7 @@ from PySide6.QtGui import (QCloseEvent,
     QWheelEvent, QMouseEvent, QKeyEvent, QResizeEvent, QDragEnterEvent, QDropEvent, QContextMenuEvent,
     QColor, QPen, QBrush)
 
-from PySide6.QtCore import Qt, QTimer, QObject, QMetaObject, QGenericArgument, Signal, QUrl, QRect, QRectF
+from PySide6.QtCore import Qt, QTimer, QObject, QMetaObject, QGenericArgument, Signal, QUrl, QRect, QRectF, Slot
 
 from threading import Thread, Condition
 
@@ -163,7 +163,7 @@ def AutoFmtSize(s: int) -> tuple[float, str]:
     else:
         return (s, "B")
 
-class Signals:
+class Signals_depraced:
     class SignalNoArg(QObject):
         signal = Signal()
     class SignalStr(QObject):
@@ -174,6 +174,9 @@ class Signals:
         signal = Signal(tuple)
 
 class WinMain(QObject):
+    load_signal = Signal(str)
+    new_pagemain_signal = Signal(str, object)
+    
     def __init__(self, app: QApplication, win: QMainWindow):
         super().__init__()
         self.app = app
@@ -183,10 +186,9 @@ class WinMain(QObject):
         self.setcontext()
         self.ext = ({}, {}, {}, {})
         # 连接加载完成信号到Main方法
-        self.load_signal = Signals.SignalNoArg()
-        self.load_signal.signal.connect(self.Main, Qt.ConnectionType.AutoConnection)
-        self.new_pagemain_signal = Signals.SignalStrPipe()
-        self.new_pagemain_signal.signal.connect(self.NewPageMain, Qt.ConnectionType.AutoConnection)
+        # self.load_signal = Signals.SignalNoArg()
+        self.load_signal.connect(self.Main, Qt.ConnectionType.AutoConnection)
+        self.new_pagemain_signal.connect(self.NewPageMain, Qt.ConnectionType.AutoConnection)
 
         # 打开图片的线程
         self.load_queue = queue.Queue()
@@ -210,6 +212,7 @@ class WinMain(QObject):
 
     def setstyle(self):
         """设置统一样式"""
+    status_signal = Signal(str)
     def setcontext(self):
         """设置窗体内容"""
         self_ref = weakref.ref(self)
@@ -246,24 +249,42 @@ class WinMain(QObject):
                 event.ignore()
         self.tabwdg.keyPressEvent = tabwdg_keyPressEvent
 
+        # 标签页右键菜单
+        def tabwdg_contextMenuEvent(event: QContextMenuEvent):
+            # 获取当前标签页
+            current_tab = self.tabwdg.currentWidget()
+            # 如果当前标签页存在
+            if current_tab:
+                # 创建菜单
+                menu = QMenu(self.tabwdg)
+                # 添加菜单项
+                menu.addAction("关闭", lambda: self.closeTab(self.tabwdg.currentIndex()))
+                menu.addAction("关闭所有", lambda: self.closeAllTabs())
+                # 显示菜单
+                menu.exec_(event.globalPos())
+        self.tabwdg.contextMenuEvent = tabwdg_contextMenuEvent
+
         # 绑定主UI
         self.main_layout.addWidget(self.tabwdg)
         # 创建状态的Signal
-        self.status_signal = Signals.SignalStr()
-        self.status_signal.signal.connect(
+        self.status_signal.connect(
             lambda text: self.setstatus(text, False) if (self := self_ref()) else logger.error("资源管理错误: self_ref() 返回 None")
         )
     def setstatus(self, text: str | None, thread: bool = False):
         """设置状态栏文本"""
         if thread:
-            self.status_signal.signal.emit(text)
+            self.status_signal.emit(text)
             return
         if text is None or text == "":
             self.status_bar.clearMessage()
         else:
             self.status_bar.showMessage(text)
-    def Main(self):
+    @Slot(str)
+    def Main(self, error: str):
         """当环境准备好之后，要执行的函数"""
+        if error:
+            QMessageBox.critical(self.win, "错误", error)
+            return
         if self.ext_err_list:
             # 格式化错误主信息（简洁版）
             errinfo_short = f"共 {len(self.ext_err_list)} 个扩展导入失败，将忽略这些扩展。\n详情可复制下方详细信息。"
@@ -283,14 +304,22 @@ class WinMain(QObject):
     def Load(self):
         """窗体启动完成后，要初始化的函数。这部分将作为线程执行（因此需特别注意线程安全）"""
         time_start = time.perf_counter()
+        error = ""
         # 加载扩展
         self.setstatus("准备导入扩展", True)
-        self.LoadExts()
+        try:
+            self.LoadExts()
+        except:
+            logger.critical("扩展加载器出现错误:", exc_info=True)
+            error = "扩展加载器出现错误，请查看日志。"
         self.setstatus("测试", True)
-
-        self.setstatus(f"就绪，启动时间：{(time.perf_counter() - time_start)*1000:.2f}ms", True)
+        if not error:
+            self.setstatus(f"就绪，启动时间：{(time.perf_counter() - time_start)*1000:.2f}ms", True)
+        else:
+            self.setstatus(error, True)
+            
         # 发送信号，通知主线程
-        self.load_signal.signal.emit()
+        self.load_signal.emit(error)
 
     def LoadExts(self):
         self.ext_err_list: list[tuple[str, Exception]] = []
@@ -307,6 +336,7 @@ class WinMain(QObject):
 
         self.ext = backend.load_exts(loadf, errf, reload_feautures=typing.cast(Sequence[int], devices)) # pylance ***
     
+    @Slot(str, object)
     def NewPageMain(self, file: str, pipe: backend.Img2arrPIPE):
         # 通知接收函数：创建PageMain
         tab = PageMain(self.win, file, pipe)
@@ -342,9 +372,9 @@ class WinMain(QObject):
                 try:
                     pipe = backend.Img2arrPIPE(file, self.ext)
                 except:
-                    logger.error(f"{file} 打开失败。错误信息：\n{traceback.format_exc()}")
+                    logger.error(f"{file} 打开失败。错误信息:", exc_info=True)
                     continue
-                self.new_pagemain_signal.signal.emit(file, pipe)
+                self.new_pagemain_signal.emit(file, pipe)
                 del file
             else:
                 pipe = None # 以后要改
@@ -439,6 +469,9 @@ class WinMain(QObject):
                 self.RemoveTab(index)
         else:
             self.RemoveTab(index)
+    def closeAllTabs(self):
+        while self.tabwdg.count() > 1:
+            self.closeTab(1)
     def closeEvent(self, event: QCloseEvent):
         # 创建线程，但不daemon
         self.close_thread = Thread(target=self.Close, args=(event,))
@@ -459,6 +492,8 @@ class WinMain(QObject):
         pass
 
 class PageMain(QWidget):
+    PreOutViewUpdateSignal = Signal(tuple)
+    CodeViewerOutViewUpdateSignal = Signal(tuple)
     def __init__(self, win: QMainWindow, file: str, pipe: backend.Img2arrPIPE):
         super().__init__()
         self_ref = weakref.ref(self)
@@ -472,8 +507,7 @@ class PageMain(QWidget):
         self.pre_update_notify: Optional[Condition] = Condition()
         self.pre_update_index: int | None = None # 线程更新时的索引。None表示更新完毕。
         # 预处理输出预览更新信号
-        self.PreOutViewUpdateSignal = Signals.SignalTuple()
-        self.PreOutViewUpdateSignal.signal.connect(lambda args: self.PreUpdateOutViewer(*args) if (self := self_ref()) else logger.error("资源管理错误: self_ref() 返回 None"))
+        self.PreOutViewUpdateSignal.connect(lambda args: self.PreUpdateOutViewer(*args) if (self := self_ref()) else logger.error("资源管理错误: self_ref() 返回 None"))
         # 供给转码器的self.pipe.pre的副本。避免潜在的内存泄漏.
         self.pre_copy: NDArray | None = None
         
@@ -485,8 +519,7 @@ class PageMain(QWidget):
         self.code_update_notify: Optional[Condition] = Condition()
         self.code_is_need_update = False # 编码器是否需要更新。将在唤醒前同时将其赋值为True以表示需要更新
         # 编码预览输出预览更新信号（不是编码输出
-        self.CodeViewerOutViewUpdateSignal = Signals.SignalTuple()
-        self.CodeViewerOutViewUpdateSignal.signal.connect(lambda args: self.CodeUpdateOutViewer(*args) if (self := self_ref()) else logger.error("资源管理错误: self_ref() 返回 None"))
+        self.CodeViewerOutViewUpdateSignal.connect(lambda args: self.CodeUpdateOutViewer(*args) if (self := self_ref()) else logger.error("资源管理错误: self_ref() 返回 None"))
 
         # 输出器名称。空字符串表示未选择输出器
         self.out_name = ""
@@ -639,6 +672,9 @@ class PageMain(QWidget):
             # 显示菜单
             menu.exec(event.globalPos())
         self.pre_top_widget.contextMenuEvent = top_contextMenuEvent
+
+        # 刷新预处理。当前是为了刷新pre_copy，未来可以用于预设加载
+        self.Pre_Update()
 
 
     def init_pre_out(self):
@@ -900,10 +936,13 @@ class PageMain(QWidget):
             if path == "":
                 QMessageBox.critical(self.win, "错误", "未选择保存路径！")
                 return
+            if not self.out_name:
+                QMessageBox.critical(self.win, "错误", "没有选择输出！")
+                return
             try:
                 self.test_OutSave(path)
             except Exception as e:
-                logger.error(f"保存失败：{traceback.format_exc()}")
+                logger.error(f"保存失败：", exc_info=True)
                 QMessageBox.critical(self.win, "错误", f"保存失败：{e}")
                 return
             QMessageBox.information(self.win, "提示", "保存成功")
@@ -1050,7 +1089,7 @@ class PageMain(QWidget):
             try:
                 py.ui_init(ui_in, ext[backend.EXT_OP_CDLL], None)
             except:
-                logger.error(f"控制台 {name} 加载失败:\n{traceback.format_exc()}")
+                logger.error(f"控制台 {name} 加载失败:", exc_info=True)
                 CustomUI.MsgBox_WithDetail(self.win, "错误", "预处理器加载失败", f"预处理器初始化失败，错误信息请展开", traceback.format_exc(), QMessageBox.Icon.Critical, QMessageBox.StandardButton.Ok)
                 err_cause = "控制台加载失败"
         else:
@@ -1129,7 +1168,7 @@ class PageMain(QWidget):
             if self.pre_update_notify is None: # 结束
                 break
             resized = False # 是否需要更新输出尺寸
-            self.PreOutViewUpdateSignal.signal.emit((False, -1, None))
+            self.PreOutViewUpdateSignal.emit((False, -1, None))
             time_calc_start, time_calc_end = 0, 0 # 预先初始化，避免Unbound
             while self.pre_update_index is not None:
                 # 如果更新之后没有再需要更新的，此时self.pre_update_index显然为None，自然结束
@@ -1143,7 +1182,7 @@ class PageMain(QWidget):
                 try:
                     resized = self._Pre_Update(index) or resized # 任意一次需要更新尺寸，则最终需要更新
                 except:
-                    logger.error(f"预处理 {self.pre_list[index].name} 处理失败:\n{traceback.format_exc()}")
+                    logger.error(f"预处理 {self.pre_list[index].name} 处理失败:", exc_info=True)
                     break
                 time_calc_end = time.perf_counter()
                 if view_realtime_update:
@@ -1152,7 +1191,7 @@ class PageMain(QWidget):
                         self.pre_copy = self.pipe.pre.copy()
                     else:
                         numpy.copyto(self.pre_copy, self.pipe.pre, 'no')
-                    self.PreOutViewUpdateSignal.signal.emit((True, time_calc_end - time_calc_start, resized))
+                    self.PreOutViewUpdateSignal.emit((True, time_calc_end - time_calc_start, resized))
                     resized = False # 重置，防止多次更新
                     # 刷新编码
                     self.code_is_need_update = True
@@ -1167,7 +1206,7 @@ class PageMain(QWidget):
                         self.pre_copy = self.pipe.pre.copy()
                     else:
                         numpy.copyto(self.pre_copy, self.pipe.pre, 'no')
-                    self.PreOutViewUpdateSignal.signal.emit((True, time_calc_end - time_calc_start, resized))
+                    self.PreOutViewUpdateSignal.emit((True, time_calc_end - time_calc_start, resized))
                     # 刷新编码
                     self.code_is_need_update = True
                     
@@ -1177,7 +1216,7 @@ class PageMain(QWidget):
                 continue
             # 失败
             if not view_realtime_update:
-                self.PreOutViewUpdateSignal.signal.emit((False, "错误！", None))
+                self.PreOutViewUpdateSignal.emit((False, "错误！", None))
         logger.info("预处理刷新线程 结束")
 
     def PreUpdateOutViewer(self, update_view: bool, t: float | int | str, resized: bool):
@@ -1267,7 +1306,7 @@ class PageMain(QWidget):
                     arglen: int
                     arg, arglen = py.update(backend.threads)  # 如果函数返回两个值
                 except:
-                    logger.error(f"预处理 {i} 更新失败，错误信息：{traceback.format_exc()}")
+                    logger.error(f"预处理 {i} 更新失败，错误信息：", exc_info=True)
                     continue
             else:
                 arg, arglen = backend.NULLPTR, 0
@@ -1281,7 +1320,7 @@ class PageMain(QWidget):
                 try:
                     py.update_end(arg, arglen)
                 except:
-                    logger.error(f"预处理 {i} 更新结束失败，错误信息：{traceback.format_exc()}")
+                    logger.error(f"预处理 {i} 更新结束失败，错误信息：", exc_info=True)
                     continue
         if it.pre_resized is None:
             logger.error("it.pre_resized 为 None")
@@ -1324,7 +1363,7 @@ class PageMain(QWidget):
                             self.code_update_notify.notify_all()
                 py.img2arr_notify_update = update_notify
             except:
-                logger.error(f"编码器 {name} 初始化失败，错误信息：{traceback.format_exc()}")
+                logger.error(f"编码器 {name} 初始化失败，错误信息：", exc_info=True)
                 err_cause = "初始化失败"
         else:
             err_cause = "没有控制台"
@@ -1367,7 +1406,7 @@ class PageMain(QWidget):
         # 调用编码预览
         arr = self.pre_copy
         if arr is None:
-            logger.error("arr 为 None")
+            logger.error("self.pre_copy 为 None")
             return False, False
         ret = self.pipe.CodeView(self.code_name, args, arglen, arr)
         # 调用py的update_end（如果有）
@@ -1375,7 +1414,7 @@ class PageMain(QWidget):
             try:
                 self.code_py.update_end(args, arglen)
             except:
-                logger.error(f"编码器控制台 update_end 调用失败，错误信息：{traceback.format_exc()}")
+                logger.error(f"编码器控制台 update_end 调用失败，错误信息：", exc_info=True)
         return ret
  
     def CodeUpdateThread(self):
@@ -1388,7 +1427,7 @@ class PageMain(QWidget):
             if self.code_update_notify is None: # 结束
                 break
             resized = False # 是否需要更新输出尺寸
-            self.CodeViewerOutViewUpdateSignal.signal.emit((False, -1, None))
+            self.CodeViewerOutViewUpdateSignal.emit((False, -1, None))
             time_calc_start = 0
             time_calc_end = 0
             while self.code_is_need_update:
@@ -1404,20 +1443,22 @@ class PageMain(QWidget):
                         new_resized = False
                     resized = resized or new_resized # 任意一次需要更新尺寸，则最终需要更新
                 except:
-                    logger.error(f"编码器 {self.code_name} 更新失败，错误信息：{traceback.format_exc()}")
+                    logger.error(f"编码器 {self.code_name} 更新失败，错误信息：", exc_info=True)
                     break
                 time_calc_end = time.perf_counter()
                 if view_realtime_update:
-                    self.CodeViewerOutViewUpdateSignal.signal.emit((True, time_calc_end - time_calc_start, resized, self.pipe.code_view.copy()))
+                    self.CodeViewerOutViewUpdateSignal.emit((True, time_calc_end - time_calc_start, resized, self.pipe.code_view.copy()))
+                    self.OutPreUpdate()
                     resized = False # 重置，防止多次更新
             else:
                 # 成功
                 if not view_realtime_update:
-                    self.CodeViewerOutViewUpdateSignal.signal.emit((True, time_calc_end - time_calc_start, resized, self.pipe.code_view.copy()))
+                    self.CodeViewerOutViewUpdateSignal.emit((True, time_calc_end - time_calc_start, resized, self.pipe.code_view.copy()))
+                    self.OutPreUpdate()
                 continue
             # 失败
             if not view_realtime_update:
-                self.CodeViewerOutViewUpdateSignal.signal.emit((False, "错误！", None))
+                self.CodeViewerOutViewUpdateSignal.emit((False, "错误！", None))
         
         logger.info("编码刷新线程 结束")
     
@@ -1443,8 +1484,6 @@ class PageMain(QWidget):
         time_update_end = time.perf_counter()
         # 创建提示文本
         self.code_top_widget.setToolTip(f"计算耗时：{t_str}\n更新耗时：{AutoFmtTime(time_update_end - time_update_start)}")
-        # 更新
-        self.OutPreUpdate()
 
     def SelectOut(self, name: str):
         """选择输出"""
@@ -1481,7 +1520,7 @@ class PageMain(QWidget):
                 py.img2arr_notify_update = update_notify
                 py.preview_textedit = self.out_preview
             except:
-                logger.error(f"编码器 {name} 初始化失败，错误信息：{traceback.format_exc()}")
+                logger.error(f"编码器 {name} 初始化失败，错误信息：", exc_info=True)
                 err_cause = "初始化失败"
         else:
             err_cause = "没有控制台"
@@ -1517,7 +1556,7 @@ class PageMain(QWidget):
             try:
                 res = self.out_py.update_preview(self.pipe.code_out)
             except:
-                logger.error(f"输出 {self.out_name} 更新失败，错误信息：{traceback.format_exc()}")
+                logger.error(f"输出 {self.out_name} 更新失败，错误信息：", exc_info=True)
                 return
             if res is False: # 当且仅当type(res) == bool 且 res == False 时，不显示预览
                 # 隐藏预览
@@ -1538,7 +1577,10 @@ class PageMain(QWidget):
             args, arglen = backend.NULLPTR, 0
         # 调用编码预览
         if self.code_name:
-            ret = self.pipe.Code(self.code_name, args, arglen)
+            try:
+                ret = self.pipe.Code(self.code_name, args, arglen)
+            except:
+                logger.error(f"编码器 {self.code_name} 更新失败，错误信息：", exc_info=True)
         else:
             logger.error("没有选择编码器！")
         # 调用py的update_end（如果有）
@@ -1546,7 +1588,7 @@ class PageMain(QWidget):
             try:
                 self.code_py.update_end(args, arglen)
             except:
-                logger.error(f"编码器控制台 update_end 调用失败，错误信息：{traceback.format_exc()}")
+                logger.error(f"编码器控制台 update_end 调用失败，错误信息：", exc_info=True)
 
     def test_OutSave(self, filepath: str):
 
@@ -1557,7 +1599,7 @@ class PageMain(QWidget):
                 arglen: int
                 args, arglen = self.out_py.update(threads)
             except:
-                logger.error(f"输出 {self.out_name} 更新失败，错误信息：{traceback.format_exc()}")
+                logger.error(f"输出 {self.out_name} 更新失败，错误信息：", exc_info=True)
                 return
         else:
             args = backend.NULLPTR
@@ -1572,7 +1614,7 @@ class PageMain(QWidget):
             try:
                 self.out_py.update_end(args, arglen)
             except:
-                logger.error(f"输出 {self.out_name} 控制台 update_end 调用失败，错误信息：{traceback.format_exc()}")
+                logger.error(f"输出 {self.out_name} 控制台 update_end 调用失败，错误信息：", exc_info=True)
         # 保存
         self.pipe.out.tofile(filepath)
 
@@ -1602,9 +1644,9 @@ class PageMain(QWidget):
         # self.base_out_viewer.deleteLater()
         # self.pre_out_viewer.deleteLater()
         # 断开信号
-        try: self.PreOutViewUpdateSignal.signal.disconnect()
+        try: self.PreOutViewUpdateSignal.disconnect()
         except: pass
-        try: self.CodeViewerOutViewUpdateSignal.signal.disconnect()
+        try: self.CodeViewerOutViewUpdateSignal.disconnect()
         except: pass
         # 删除自身
         super().deleteLater()
@@ -1641,6 +1683,8 @@ class PreProcessor(QObject):
         self_i = self.pagemain.Pre_FindIndex(self)
         # print("img2arr_notify_update", self_i, "对象id:", id(self))
         self.pagemain.Pre_Update(self_i)
+
+    update_tiptext_signal = Signal(str)
 
     def init_ui(self) -> tuple[QWidget, QWidget]:
         ui = QWidget()
@@ -1720,8 +1764,7 @@ class PreProcessor(QObject):
         layout_upper.addWidget(tiptext)
         tiptext_ref = weakref.ref(tiptext)
 
-        self.update_tiptext_signal = Signals.SignalStr()
-        self.update_tiptext_signal.signal.connect(lambda text: tiptext.setText(text) if (tiptext := tiptext_ref()) else logger.error("资源管理错误: tiptext_ref() 返回 None"))
+        self.update_tiptext_signal.connect(lambda text: tiptext.setText(text) if (tiptext := tiptext_ref()) else logger.error("资源管理错误: tiptext_ref() 返回 None"))
 
         # 如果py不为None, 绑定回调
         if self.py is not None:
@@ -1729,7 +1772,7 @@ class PreProcessor(QObject):
             def img2arr_UpdateTiptext(text: str):
                 self = self_ref()
                 if not self: return
-                self.update_tiptext_signal.signal.emit(text)
+                self.update_tiptext_signal.emit(text)
             self.py.img2arr_UpdateTiptext = img2arr_UpdateTiptext
 
         # 添加QScrollArea
@@ -1786,7 +1829,7 @@ if __name__ == "__main__":
     if not isinstance(threads_local, int) or threads_local < 0:
         SetSet("Parallel.Threads", 0)
         threads_local = 0
-    threads = threads_local
+    threads = int(threads_local)
     backend.SetParallelThreads(threads)
     # 加载UI
     app = QApplication(sys.argv)

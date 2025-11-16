@@ -179,6 +179,10 @@ class WinMain(QObject):
         self.file_menu = self.menu_bar.addMenu("界面")
         self.file_menu.addAction("重新加载", lambda: self.Reload())
 
+        # F5: 重新加载
+        self.win.keyPressEvent = lambda event: self.Reload() if event.key() == Qt.Key.Key_F5 else None
+
+
 
         self.setup_runtime_wdg()
         self.setup_prep_wdg()
@@ -348,7 +352,7 @@ class WinMain(QObject):
                         else:
                             raise Exception("未找到main.c或main.cpp")
 
-            except subprocess.CalledProcessError as e:
+            except Exception as e:
                 print("编译失败，报错:", e)
                 self.state = "error"
             else:
@@ -436,6 +440,9 @@ class WinMain(QObject):
         self.prep_layout, self.prep_main_layout = self.setup_general_wdg()
         self.prep_wdg.setLayout(self.prep_layout)
 
+        self.load_prep_wdg()
+
+    def load_prep_wdg(self):
         dirlist = os.listdir("./prep/img")
 
         dir_name_list: list[tuple[str, str]] = []
@@ -447,28 +454,32 @@ class WinMain(QObject):
     def setup_code_wdg(self):
         self.code_layout, self.code_main_layout = self.setup_general_wdg()
         self.code_wdg.setLayout(self.code_layout)
-
+        self.load_code_wdg()
+        
+    def load_code_wdg(self):
         dirlist = os.listdir("./code/img")
-
         dir_name_list: list[tuple[str, str]] = []
         for dir_name in dirlist:
             dir_name_list.append((f"./code/img/{dir_name}", dir_name))
-
         self.load_generel_wdg(self.code_main_layout, dir_name_list)
+
     def setup_out_wdg(self):
         self.out_layout, self.out_main_layout = self.setup_general_wdg()
         self.out_wdg.setLayout(self.out_layout)
-
+        self.load_out_wdg()
+    
+    def load_out_wdg(self):
         dirlist = os.listdir("./out/img")
-
         dir_name_list: list[tuple[str, str]] = []
         for dir_name in dirlist:
             dir_name_list.append((f"./out/img/{dir_name}", dir_name))
-
         self.load_generel_wdg(self.out_main_layout, dir_name_list)
     
     def Reload(self):
         self.load_runtime_wdg()
+        self.load_prep_wdg()
+        self.load_code_wdg()
+        self.load_out_wdg()
 
 
 

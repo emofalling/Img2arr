@@ -24,9 +24,17 @@ int f1_avx512(size_t threads, size_t idx, args_t * args, uint8_t* in_buf, uint8_
 int f1_avx2(size_t threads, size_t idx, args_t * args, uint8_t* in_buf, uint8_t* out_buf, size_t in_shape[2]);
 int f1_sse2(size_t threads, size_t idx, args_t * args, uint8_t* in_buf, uint8_t* out_buf, size_t in_shape[2]);
 
+#ifdef __GNUC__
+#define likely(x)   __builtin_expect(!!(x), 1)
+#define unlikely(x) __builtin_expect(!!(x), 0)
+#else
+#define likely(x)   (x)
+#define unlikely(x) (x)
+#endif
 
 // 非扩展指令集实现的饱和加法
-#define SaturationAdd(x, val) ((x) < (255 - val)) ? ((x) + val) : 255
+#define SaturationAdd(x, val) (likely((x) < (255 - val))) ? ((x) + val) : 255
 // 非扩展指令集实现的饱和减法
-#define SaturationSub(x, val) ((x) > val) ? ((x) - val) : 0
+#define SaturationSub(x, val) (likely((x) > val)) ? ((x) - val) : 0
+
 

@@ -6,11 +6,15 @@ import weakref
 
 from PySide6.QtWidgets import QWidget, QLabel, QCheckBox, QSlider, QVBoxLayout, QHBoxLayout, QLineEdit, QLayout, QTextEdit
 
-from PySide6.QtCore import Qt, QTimer, QObject
+from PySide6.QtCore import Qt, QTimer, QObject, Signal
 
 from PySide6.QtGui import QPalette, QColor, QFontMetrics, QIntValidator
 
 from lib.ExtensionPyABC import abcExt
+
+import logging, os.path
+
+logger = logging.getLogger(os.path.basename(os.path.dirname(__file__)))
 
 BASE62 = string.digits + string.ascii_lowercase + string.ascii_uppercase
 
@@ -24,11 +28,14 @@ def int2str(num: int, base: int = 62) -> str:
         num, remainder = divmod(num, base)
         res = BASE62[remainder] + res
     return res
+
+class SignalStr(QObject):
+    signal = Signal(str)
     
 class UI(abcExt.UI):
-    """Main的默认实现"""
     def __init__(self):
-        pass
+        self.update_preview_text_signal = SignalStr()
+        self.update_preview_text_signal.signal.connect(self.UpdatePreviewText)
     def ui_init(self, widget: QWidget, ext: CDLL, save: dict | None):
         self_ref = weakref.ref(self)
         self.ext = ext
@@ -239,6 +246,12 @@ class UI(abcExt.UI):
 
         return (byref(args), sizeof(args))
 
+    def UpdatePreviewText(self, text: str):
+        if self.preview_textedit is None: 
+            logger.error("preview_textedit 竟然神奇的是 None")
+            return
+        self.preview_textedit.setText(text)
+
     def update_preview(self, arr: NDArray[uint8]):
         # 如果没有self.preview_textedit，则直接退出
         if not isinstance(self.preview_textedit, QTextEdit): return False
@@ -305,7 +318,8 @@ class UI(abcExt.UI):
                 total_width += num_width
                 total_str_0 += num_str
         # 更新文本
-        self.preview_textedit.setText(total_str_0 + total_str_1)
+        # self.preview_textedit.setText(total_str_0 + total_str_1)
+        self.update_preview_text_signal.signal.emit(total_str_0 + total_str_1)
         return True
 
 

@@ -254,7 +254,8 @@ def load_exts(loadf: Callable[[str], None], errf: Callable[[str, Exception], Non
                     path = os.path.join(ext_fullpath, target_extfile)
                     if not os.path.isfile(path):
                         # 删除
-                        del reload_var[funci][ctype][extname]
+                        if extname in reload_var[funci][ctype]:
+                            del reload_var[funci][ctype][extname]
                         continue
                     try:
                         ext = _load_exts_cdll(path, regname_prefix, is_code_stage=(funci==EXT_TYPE_CODE))
@@ -530,6 +531,8 @@ class Img2arrPIPE:
         if self.code_view.shape != out_shape:
             self.code_view.resize(out_shape, refcheck=False)
             view_updated = True
+        logger.debug(f"此次编码预览输出尺寸: {out_shape}")
+        logger.debug(f"{in_arr.shape} -> {self.code_view.shape}")
         # 调用编码器
         result = call_processor(name, dll, args, MidBuffer(in_arr), MidBuffer(self.code_view), is_code_view=True)
         # 返回结果
