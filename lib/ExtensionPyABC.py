@@ -8,7 +8,7 @@ from typing import Optional, TypeAlias
 
 from numpy import uint8
 from numpy.typing import NDArray
-from ctypes import CDLL, c_void_p, byref
+from ctypes import CDLL, _Pointer, byref, c_void_p
 # import _ctypes
 
 from PySide6.QtWidgets import QWidget, QTextEdit
@@ -23,12 +23,12 @@ _CArgObject: TypeAlias = type(byref(c_void_p(0))) # type: ignore
 
 # _CArgObject: TypeAlias = _ctypes._CArgObject
 
-CPointerArgType: TypeAlias = _CArgObject | c_void_p | int
+CPointerArgType: TypeAlias = _CArgObject | _Pointer
 
 class abcExt(ModuleType):
     #@staticmethod
     class UI():
-        """Main的抽象类"""
+        """UI的抽象类"""
         def __init__(self):
             """类初始化代码。用处不大"""
             ...
@@ -42,7 +42,7 @@ class abcExt(ModuleType):
         def __del__(self):
             """UI销毁时要执行的代码"""
             ...
-        def ui_save(self) -> dict:
+        def ui_save(self) -> dict | None:
             """保存当前UI的设置。返回一个字典或None。当窗口或标签页关闭时，在开启存档后会调用此函数。"""
             ...
         def img2arr_UpdateTiptext(self, text: str) -> None:
@@ -57,7 +57,7 @@ class abcExt(ModuleType):
             """通知img2arr更新预处理。在输出扩展中为空函数。
             """
             ...
-        def update(self, threads: int) -> tuple[CPointerArgType, int]:
+        def update(self, arr: NDArray[uint8], threads: int) -> tuple[CPointerArgType, int]:
             """当img2arr需要刷新计算时调用。可能在别的线程中调用，因此请使用线程安全的方法在此函数修改UI。
             应返回一个元组，第一个元素为传参的指针，第二个元素为传参的长度
             threads: 此次的线程数。1表示单线程，0表示使用了OpenCL，其余表示多线程的线程数。

@@ -455,6 +455,7 @@ def call_processor(name: str, dll: ctypes.CDLL, args: ExtensionPyABC.CPointerArg
         f0_func = dll.f0p if hasattr(dll, "f0p") else None
     # 如果有多核，优先使用多核
     if hasattr(dll, f1_name):
+        logger.debug("Multi Core")
         # 准备返回值列表，默认值全是0
         ret_list = numpy.zeros(threads, dtype=numpy.intc)
         # 多核
@@ -633,12 +634,16 @@ class Pre_iter:
         # 没有找到，返回-1
         return -1
 
-    def current_buf(self) -> MidBuffer:
-        """获取当前中间缓冲区"""
-        if self.cur_buf_index == -1:
+    def current_buf(self, unsafe: bool = False) -> MidBuffer:
+        """获取当前中间缓冲区
+        unsafe: 若为True，则当cur_buf_index为-1时，返回img。为False则直接抛出错误（此时管线已经出错）
+        """
+        if self.cur_buf_index == -1 and not unsafe:
             raise AttributeError("缓冲区索引错误！")
             # print("self.cur_buf_index == -1, use self.img")
             # return self.img
+        if self.cur_buf_index == -1:
+            return self.img
         else:
             return self.img_pre_buf[self.cur_buf_index]
     def add_buf_reader(self, i: int):

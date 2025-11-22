@@ -41,7 +41,7 @@ from functools import partial
 from itertools import islice
 
 from typing import (
-    Callable, Optional, Sequence,
+    Callable, Optional, Sequence, Literal, 
     TypeVar,
 )
 
@@ -173,6 +173,14 @@ class Signals_depraced:
     class SignalTuple(QObject):
         signal = Signal(tuple)
 
+
+"""
+标签页对象须知：
+如果传入的QWidget具有DestroyEvent方法，则：
+    当标签页被关闭时，会调用该QWidget的DestroyEvent方法，返回True则将会销毁该QWidget，返回False则不会销毁该QWidget。
+    否则，直接销毁该QWidget。
+"""
+
 class WinMain(QObject):
     load_signal = Signal(str)
     new_pagemain_signal = Signal(str, object)
@@ -261,7 +269,7 @@ class WinMain(QObject):
                 menu.addAction("关闭", lambda: self.closeTab(self.tabwdg.currentIndex()))
                 menu.addAction("关闭所有", lambda: self.closeAllTabs())
                 # 显示菜单
-                menu.exec_(event.globalPos())
+                menu.exec(event.globalPos())
         self.tabwdg.contextMenuEvent = tabwdg_contextMenuEvent
 
         # 绑定主UI
@@ -298,6 +306,7 @@ class WinMain(QObject):
             CustomUI.MsgBox_WithDetail(self.win, "错误", "扩展导入失败", errinfo_short, errinfo_detailed, QMessageBox.Icon.Critical, QMessageBox.StandardButton.Ok)
 
         # 创建欢迎页
+        self.welcome_page = self.WelcomePage(self)
         self.welcome()
         # 测试页
         # self.test()
@@ -383,64 +392,90 @@ class WinMain(QObject):
             # 一份是emit的pipe，另一份是局部变量pipe
             # 如果不删除，局部变量pipe会一直驻留在内存中，导致删不掉
             del pipe, data
+    class WelcomePage(QWidget):
+        def __init__(self, parent: "WinMain"):
+            super().__init__()
+
+            self.parent_ref = weakref.ref(parent)
+
+            self.main()
+        
+        def main(self):
+            parent = self.parent_ref()
+            if parent is None:
+                logger.error("WelcomePage: parent_ref is None")
+                return
+    
+            layout = QVBoxLayout(self)
+    
+            in_widget = QWidget()
+            in_layout = QVBoxLayout()
+            in_widget.setLayout(in_layout)
+    
+    
+            button = QPushButton("打开文件")
+            button.clicked.connect(parent.openfiles)
+    
+            cb = QCheckBox("性能模式")
+            
+            def cb_change(state: int):
+                global pipe_update_mode
+                if state == Qt.CheckState.Checked.value:
+                    pipe_update_mode = backend.PRE_PIPE_MODES.PIPE_MODE_SPEED
+                    logger.debug("切换为性能模式")
+                else:
+                    pipe_update_mode = backend.PRE_PIPE_MODES.PIPE_MODE_DEFAULT
+                    logger.debug("切换为默认模式")
+            cb.stateChanged.connect(cb_change)
+                
+    
+            # 使用addWidget的alignment参数直接实现居中
+            layout.addWidget(in_widget, alignment=Qt.AlignmentFlag.AlignCenter)
+            in_layout.addWidget(button)
+            in_layout.addWidget(cb)
+    
+            # 添加一个标识，表示这是欢迎页面
+            self.setObjectName("welcome")
+    
+            # 设置Widget可以接收文件拖进来
+            self.setAcceptDrops(True)
+            # 添加事件
+            def dragEnterEvent(event: QDragEnterEvent):
+                # 仅接受文件，不接受文件夹
+                if event.mimeData().hasUrls():
+                    event.acceptProposedAction()
+    
+            def dropEvent(event: QDropEvent):
+                urls = event.mimeData().urls()
+                files = []
+                for url in urls:
+                    file = url.toLocalFile()
+                    if os.path.isfile(file):
+                        files.append(file)
+                if files:
+                    for file in files:
+                        parent.load_queue.put(file)
+                
+            self.dragEnterEvent = dragEnterEvent
+            self.dropEvent = dropEvent
+        def DestroyEvent(self) -> bool:
+            # 对于欢迎页面，询问性关闭
+            parent = self.parent_ref()
+            if parent is None:
+                logger.error("WelcomePage: parent_ref is None")
+                return True
+            
+            # 如果没有选择不再提示，弹出消息框询问是否关闭
+            if GetSet("directlyCloseWelcome"):
+                return True
+            else:
+                result, check = CustomUI.MsgBoxQuesion_WithCheckButton(parent.win, "确认关闭", "真的要关闭欢迎页吗？", "不再提示（可从设置恢复）")
+                if result == QMessageBox.StandardButton.Yes and check:
+                    SetSet("directlyCloseWelcome", True)
+                return result == QMessageBox.StandardButton.Yes
     def welcome(self):
         """欢迎"""
-        tab = QWidget()
-
-        layout = QVBoxLayout(tab)
-
-        in_widget = QWidget()
-        in_layout = QVBoxLayout()
-        in_widget.setLayout(in_layout)
-
-
-        button = QPushButton("打开文件")
-        button.clicked.connect(self.openfiles)
-
-        cb = QCheckBox("性能模式")
-        
-        def cb_change(state: int):
-            global pipe_update_mode
-            if state == Qt.CheckState.Checked.value:
-                pipe_update_mode = backend.PRE_PIPE_MODES.PIPE_MODE_SPEED
-                logger.debug("切换为性能模式")
-            else:
-                pipe_update_mode = backend.PRE_PIPE_MODES.PIPE_MODE_DEFAULT
-                logger.debug("切换为默认模式")
-        cb.stateChanged.connect(cb_change)
-            
-
-        # 使用addWidget的alignment参数直接实现居中
-        layout.addWidget(in_widget, alignment=Qt.AlignmentFlag.AlignCenter)
-        in_layout.addWidget(button)
-        in_layout.addWidget(cb)
-
-        # 添加一个标识，表示这是欢迎页面
-        tab.setObjectName("welcome")
-
-        # 设置Widget可以接收文件拖进来
-        tab.setAcceptDrops(True)
-        # 添加事件
-        def dragEnterEvent(event: QDragEnterEvent):
-            # 仅接受文件，不接受文件夹
-            if event.mimeData().hasUrls():
-                event.acceptProposedAction()
-
-        def dropEvent(event: QDropEvent):
-            urls = event.mimeData().urls()
-            files = []
-            for url in urls:
-                file = url.toLocalFile()
-                if os.path.isfile(file):
-                    files.append(file)
-            if files:
-                for file in files:
-                    self.load_queue.put(file)
-            
-        tab.dragEnterEvent = dragEnterEvent
-        tab.dropEvent = dropEvent
-
-        self.tabwdg.addTab(tab, "欢迎")
+        self.tabwdg.addTab(self.welcome_page, "欢迎")
     
     def RemoveTab(self, index: int):
         # 获取index所对widget
@@ -455,20 +490,13 @@ class WinMain(QObject):
     def closeTab(self, index: int):
         # 判断是否为欢迎页面
         qw = self.tabwdg.widget(index)
-        if qw.objectName() == "welcome":
-            # 如果没有选择不再提示，弹出消息框询问是否关闭
-            if not GetSet("directlyCloseWelcome"):
-                result, check = CustomUI.MsgBoxQuesion_WithCheckButton(self.win, "确认关闭", "真的要关闭欢迎页吗？", "不再提示（可从设置恢复）")
-                if result == QMessageBox.StandardButton.Yes:
-                    self.RemoveTab(index)
-
-                    # 判断性写入，减少IO操作
-                    if check:
-                        SetSet("directlyCloseWelcome", check)
-            else:
-                self.RemoveTab(index)
-        else:
-            self.RemoveTab(index)
+        # 如果有自定义方法DestroyEvent，则调用以判断是否关闭
+        destroy_method = getattr(qw, "DestroyEvent", None)
+        if destroy_method is not None:
+            close = destroy_method()
+            if not close: 
+                return
+        self.RemoveTab(index)
     def closeAllTabs(self):
         while self.tabwdg.count() > 1:
             self.closeTab(1)
@@ -529,9 +557,11 @@ class PageMain(QWidget):
 
         # 预处理器线程
         self.pre_args_thread = Thread(target=self.PreUpdateThread, daemon=True)
+        self.pre_args_thread_state: Literal["run", "idle"] = "idle"
         self.pre_args_thread.start()
         # 编码器线程
         self.code_args_thread = Thread(target=self.CodeUpdateThread, daemon=True)
+        self.code_args_thread_state: Literal["run", "idle"] = "idle"
         self.code_args_thread.start()
 
         self.main()
@@ -1161,12 +1191,16 @@ class PageMain(QWidget):
     def PreUpdateThread(self):
         """更新预处理管线的线程"""
         while True:
+            # 更新状态
+            self.pre_args_thread_state = 'idle'
             if self.pre_update_notify is None:
                 break
             with self.pre_update_notify:
                 self.pre_update_notify.wait()
             if self.pre_update_notify is None: # 结束
                 break
+            # 更新状态
+            self.pre_args_thread_state = 'run'
             resized = False # 是否需要更新输出尺寸
             self.PreOutViewUpdateSignal.emit((False, -1, None))
             time_calc_start, time_calc_end = 0, 0 # 预先初始化，避免Unbound
@@ -1304,7 +1338,7 @@ class PageMain(QWidget):
                 try:
                     arg: ExtensionPyABC.CPointerArgType
                     arglen: int
-                    arg, arglen = py.update(backend.threads)  # 如果函数返回两个值
+                    arg, arglen = py.update(it.current_buf(unsafe=True).arr, backend.threads)  # 如果函数返回两个值
                 except:
                     logger.error(f"预处理 {i} 更新失败，错误信息：", exc_info=True)
                     continue
@@ -1396,18 +1430,19 @@ class PageMain(QWidget):
     
     def _CodeViewUpdate(self):
         """更新编码预览输出，由CodeUpdateThread调用"""
-        # 调用py，获取参数
-        if self.code_py is not None and hasattr(self.code_py, "update"):
-            args: ExtensionPyABC.CPointerArgType
-            arglen: int
-            args, arglen = self.code_py.update(backend.threads)
-        else:
-            args, arglen = backend.NULLPTR, 0
-        # 调用编码预览
+        # 取副本
         arr = self.pre_copy
         if arr is None:
             logger.error("self.pre_copy 为 None")
             return False, False
+        # 调用py，获取参数
+        if self.code_py is not None and hasattr(self.code_py, "update"):
+            args: ExtensionPyABC.CPointerArgType
+            arglen: int
+            args, arglen = self.code_py.update(arr, backend.threads)
+        else:
+            args, arglen = backend.NULLPTR, 0
+        # 调用编码预览
         ret = self.pipe.CodeView(self.code_name, args, arglen, arr)
         # 调用py的update_end（如果有）
         if self.code_py is not None and hasattr(self.code_py, "update_end"):
@@ -1419,13 +1454,18 @@ class PageMain(QWidget):
  
     def CodeUpdateThread(self):
         """更新编码输出的线程"""
+        self_ref = weakref.ref(self)
         while True:
+            # 更新状态
+            self.code_args_thread_state = 'idle'
             if self.code_update_notify is None: # 结束
                 break
             with self.code_update_notify:
                 self.code_update_notify.wait()
             if self.code_update_notify is None: # 结束
                 break
+            # 更新状态
+            self.code_args_thread_state = 'run'
             resized = False # 是否需要更新输出尺寸
             self.CodeViewerOutViewUpdateSignal.emit((False, -1, None))
             time_calc_start = 0
@@ -1514,7 +1554,10 @@ class PageMain(QWidget):
                 # 尝试绑定py.img2arr_notify_update
                 def update_notify():
                     self = self_ref()
-                    if self is None: return
+                    if self is None: 
+                        logger.error("self_ref()返回None")
+                        return
+
                     # 更新预览
                     self.OutPreUpdate()
                 py.img2arr_notify_update = update_notify
@@ -1572,7 +1615,7 @@ class PageMain(QWidget):
         if self.code_py is not None and hasattr(self.code_py, "update"):
             args: ExtensionPyABC.CPointerArgType
             arglen: int
-            args, arglen = self.code_py.update(backend.threads)
+            args, arglen = self.code_py.update(self.pipe.pre, backend.threads)
         else:
             args, arglen = backend.NULLPTR, 0
         # 调用编码预览
@@ -1597,7 +1640,7 @@ class PageMain(QWidget):
             try:
                 args: ExtensionPyABC.CPointerArgType
                 arglen: int
-                args, arglen = self.out_py.update(threads)
+                args, arglen = self.out_py.update(self.pipe.code_out, threads)
             except:
                 logger.error(f"输出 {self.out_name} 更新失败，错误信息：", exc_info=True)
                 return
@@ -1619,7 +1662,15 @@ class PageMain(QWidget):
         self.pipe.out.tofile(filepath)
 
 
+    def DestroyEvent(self) -> bool:
+        """当即将被关闭标签页时调用
+        返回是否允许关闭"""
+        # 若任意一线程正在运行，则通过对话框询问是否关闭
+        if self.pre_args_thread_state == 'idle' and self.code_args_thread_state == 'idle':
+            return True
+        ret = QMessageBox.question(self, "关闭", "计算线程仍在运行。是否仍然关闭？\n（关闭后，计算线程不会立即停止，且可能会产生非致命性错误）", QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, QMessageBox.StandardButton.No)
 
+        return ret == QMessageBox.StandardButton.Yes
     
     def deleteLater(self):
         """清理回调"""

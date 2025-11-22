@@ -39,7 +39,7 @@ class CustomUI:
                                       buttons: QMessageBox.StandardButton = QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
                                       default: QMessageBox.StandardButton = QMessageBox.StandardButton.No
                                      ) -> tuple[int, bool]:
-        """消息框，但多了一个复选框，通常用于“不再提示”等功能"""
+        """消息框，但多了一个复选框，通常用于“不再提示”等功能。返回(选择的按钮，是否勾选了复选框)"""
         # 创建消息框
         msg_box = QMessageBox(win)
         msg_box.setWindowTitle(title)

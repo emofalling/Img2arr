@@ -1,9 +1,11 @@
 import json
 import numpy as np
 from numpy.typing import NDArray
-from ctypes import CDLL, c_void_p, c_uint64, c_double, c_size_t, POINTER, addressof
+from ctypes import CDLL, c_void_p, c_uint64, c_double, c_size_t, POINTER, addressof, _Pointer
 import math
 import weakref
+
+from typing import Optional
 
 from lib import ColorStandard
 
@@ -15,65 +17,26 @@ from PySide6.QtCore import Qt, QTimer, QObject, QPointF, Signal
 
 from PySide6.QtGui import QPalette, QColor, QFontMetrics, QPen
 
+import logging
 
+logger = logging.getLogger(__name__)
 
-class abcUI():
-    """Main的抽象类"""
-    def __init__(self):
-        """类初始化代码。用处不大"""
-        ...
-    def ui_init(self, widget: QWidget, ext: CDLL, save: dict | None):
-        """UI初始化时的加载代码。每个独立的扩展控制台都会创建一个独立的类。
-        widget: 供自身使用的QWidget。
-        ext: 自己的动态链接库扩展。
-        save: 之前存档的内容。若没有，则为None。
-        """
-        ...
-    def __del__(self):
-        """UI销毁时要执行的代码"""
-        ...
-    def ui_save(self) -> dict:
-        """保存当前UI的设置。返回一个字典或None。当窗口或标签页关闭时，在开启存档后会调用此函数。"""
-        ...
-    def img2arr_UpdateTiptext(self, text: str) -> None:
-        """不需要扩展提供此函数。img2arr开头的所有函数都不需要扩展提供，而作为扩展的一个辅助功能。所有img2arr开头的函数在__init__后才会存在。
-        更新提示文本。在折叠时显示粗略参数时十分重要。
-        text: 要显示的文本。
-        该函数是线程安全的。
-        """
-        ...
-    def img2arr_notify_update(self) -> None:
-        """通知img2arr更新预处理。
-        """
-        ...
-    def update(self, threads: int) -> tuple[c_void_p, int]:
-        """当img2arr需要刷新计算时调用。可能在别的线程中调用，因此请使用线程安全的方法在此函数修改UI。
-        应返回一个元组，第一个元素为传参的指针，第二个元素为传参的长度
-        threads: 此次的线程数。1表示单线程，0表示使用了OpenCL，其余表示多线程的线程数。
-        """
-        ...
-    def update_end(self, arg: c_void_p, arglen: int) -> None:
-        """当img2arr管线更新结束时调用。
-        arg: 上一次update传参的指针。
-        arglen: 上一次update传参的长度。
-        """
-        ...
-
+from lib.ExtensionPyABC import abcExt
 
 class HistChartSignal(QObject):
     """用于传递直方图数据的信号"""
     update = Signal(list, list, list, list, 
                     list, list, list, list)
 
-class UI(abcUI):
+class UI(abcExt.UI):
     """主类"""
     def __init__(self):
         """初始化代码。用处不大"""
-        self.threads = None
-        self.r_arr: NDArray[np.float64] = None
-        self.g_arr: NDArray[np.float64] = None
-        self.b_arr: NDArray[np.float64] = None
-        self.a_arr: NDArray[np.float64] = None
+        self.threads = 1
+        self.r_arr: NDArray[np.float64] = np.array([])
+        self.g_arr: NDArray[np.float64] = np.array([])
+        self.b_arr: NDArray[np.float64] = np.array([])
+        self.a_arr: NDArray[np.float64] = np.array([])
         print("亮度 初始化")
     """用于绘制自己的UI空间。需要PySide6。若没有此函数，则表示没有UI。不需要构造函数和析构函数。"""
     def ui_init(self, widget: QWidget, ext: CDLL, save: dict | None):
@@ -87,7 +50,7 @@ class UI(abcUI):
         channel_button_layout.setContentsMargins(0, 0, 0, 0)
         layout.addLayout(channel_button_layout)
         self.channel_group = QButtonGroup(widget)
-        self.channel_group.buttonClicked.connect(lambda: self_ref().ui_update())
+        self.channel_group.buttonClicked.connect(lambda: self.ui_update() if (self := self_ref()) else logger.error("self_ref()返回None"))
         self.radio_channel_red = QRadioButton("红色")
         self.radio_channel_green = QRadioButton("绿色")
         self.radio_channel_blue = QRadioButton("蓝色")
@@ -245,11 +208,11 @@ class UI(abcUI):
             self.series_rgb.append(i, 0)
         # 创建信号
         self.signal = HistChartSignal()
-        self.signal.update.connect(lambda r, g, b, a, rg, gb, rb, rgb: self_ref().UpdateChart(r, g, b, a, rg, gb, rb, rgb))
+        self.signal.update.connect(lambda r, g, b, a, rg, gb, rb, rgb: self.UpdateChart(r, g, b, a, rg, gb, rb, rgb) if (self := self_ref()) else logger.error("self_ref()返回None"))
         # 对数化多选框
         self.log_checkbox = QCheckBox("对数化")
         # self.log_checkbox.setChecked(True)
-        self.log_checkbox.stateChanged.connect(lambda: self_ref().ui_update())
+        self.log_checkbox.stateChanged.connect(lambda: self.ui_update() if (self := self_ref()) else logger.error("self_ref()返回None"))
         layout.addWidget(self.log_checkbox)
 
     # 更新提示文本
@@ -260,7 +223,10 @@ class UI(abcUI):
     def Update(self):
         self.UpdateTiptext()
         self.img2arr_notify_update()
-    def update(self, threads):
+    
+    item_type = type((c_uint64 * 256)(0))
+
+    def update(self, arr, threads):
       # [pack]struct{
       # [pack]struct{
       #     uint64_t [out]R[256]; // 直方图求和结果：R
@@ -298,40 +264,38 @@ class UI(abcUI):
     def update_end(self, arg, arglen):
 
         if self.threads == 1:
-            # 单线程情况：直接使用内存视图转换，避免循环
+            # 单线程情况
             r = np.frombuffer((c_uint64 * 256).from_address(addressof(arg[0].contents)), dtype=np.uint64)
             g = np.frombuffer((c_uint64 * 256).from_address(addressof(arg[1].contents)), dtype=np.uint64)
             b = np.frombuffer((c_uint64 * 256).from_address(addressof(arg[2].contents)), dtype=np.uint64)
             a = np.frombuffer((c_uint64 * 256).from_address(addressof(arg[3].contents)), dtype=np.uint64)
+
+            r_result, g_result, b_result, a_result = r, g, b, a
         else:
-            # 多线程：访问连续的内存块
+            # 多线程情况
             threads = self.threads
             total_size = 256 * threads
 
-            # 使用 .contents 访问实际的数组数据
             r_flat = np.frombuffer((c_uint64 * total_size).from_address(addressof(arg[0].contents)), dtype=np.uint64, count=total_size)
             g_flat = np.frombuffer((c_uint64 * total_size).from_address(addressof(arg[1].contents)), dtype=np.uint64, count=total_size)
             b_flat = np.frombuffer((c_uint64 * total_size).from_address(addressof(arg[2].contents)), dtype=np.uint64, count=total_size)
             a_flat = np.frombuffer((c_uint64 * total_size).from_address(addressof(arg[3].contents)), dtype=np.uint64, count=total_size)
 
-            # 重塑为 (threads, 256) 然后求和
             r_2d = r_flat.reshape(threads, 256)
             g_2d = g_flat.reshape(threads, 256)
             b_2d = b_flat.reshape(threads, 256)
             a_2d = a_flat.reshape(threads, 256)
 
-            # 沿线程维度求和
-            r = np.sum(r_2d, axis=0, dtype=np.uint64)
-            g = np.sum(g_2d, axis=0, dtype=np.uint64)
-            b = np.sum(b_2d, axis=0, dtype=np.uint64)
-            a = np.sum(a_2d, axis=0, dtype=np.uint64)
-        
-        
+            r_result = np.sum(r_2d, axis=0, dtype=np.uint64)
+            g_result = np.sum(g_2d, axis=0, dtype=np.uint64)
+            b_result = np.sum(b_2d, axis=0, dtype=np.uint64)
+            a_result = np.sum(a_2d, axis=0, dtype=np.uint64)
 
-        self.r_arr = r.astype(np.float64)
-        self.g_arr = g.astype(np.float64)
-        self.b_arr = b.astype(np.float64)
-        self.a_arr = a.astype(np.float64)
+        # 明确转换
+        self.r_arr = np.array(r_result, dtype=np.float64)
+        self.g_arr = np.array(g_result, dtype=np.float64)
+        self.b_arr = np.array(b_result, dtype=np.float64)
+        self.a_arr = np.array(a_result, dtype=np.float64)
 
         self.ui_update()
 
@@ -342,8 +306,23 @@ class UI(abcUI):
         b = self.b_arr.copy()
         a = self.a_arr.copy()
 
+        log = self.log_checkbox.isChecked()
+
+        if self.radio_channel_red.isChecked():
+            check = "R"
+        elif self.radio_channel_green.isChecked():
+            check = "G"
+        elif self.radio_channel_blue.isChecked():
+            check = "B"
+        elif self.radio_channel_alpha.isChecked():
+            check = "A"
+        elif self.radio_channel_rgb.isChecked():
+            check = "RGB"
+        else:
+            raise Exception("未选择通道")
+
         # 如果勾选了对数化，则对数化
-        if self.log_checkbox.isChecked():
+        if log:
             r = np.log1p(r)
             g = np.log1p(g)
             b = np.log1p(b)
@@ -351,35 +330,35 @@ class UI(abcUI):
 
         # 各通道归一化
         # 如果仅R, R归一化
-        if self.radio_channel_red.isChecked():
+        if check == "R":
             maxv = np.max(r)
             if maxv != 0.0:
                 r /= maxv
             # else:
             #     r[:] = 0
         # 如果仅G, G归一化
-        elif self.radio_channel_green.isChecked():
+        elif check == "G":
             maxv = np.max(g)
             if maxv != 0.0:
                 g /= maxv
             # else:
             #     g[:] = 0
         # 如果仅B, B归一化
-        elif self.radio_channel_blue.isChecked():
+        elif check == "B":
             maxv = np.max(b)
             if maxv != 0.0:
                 b /= maxv
             # else:
             #     b[:] = 0
         # 如果仅A, A归一化
-        elif self.radio_channel_alpha.isChecked():
+        elif check == "A":
             maxv = np.max(a)
             if maxv != 0.0:
                 a /= maxv
             # else:
             #     a[:] = 0
         # 如果RGB, RGB归一化
-        elif self.radio_channel_rgb.isChecked():
+        elif check == "RGB":
             maxv = max(np.max(r), np.max(g), np.max(b))
             if maxv != 0.0:
                 r /= maxv
@@ -394,25 +373,27 @@ class UI(abcUI):
             raise Exception("未选择通道")
 
         # 对于RGB，准备rg, gb, rb, rgb
-        if self.radio_channel_rgb.isChecked():
+        if check == "RGB":
             rg, gb, rb = np.minimum(r, g), np.minimum(g, b), np.minimum(r, b)
             rgb = np.minimum(rg, b)
+        else:
+            rg, gb, rb, rgb = [], [], [], [] # 如果执行到这一行，说明之后的代码不会使用到这些变量
 
         # 生成点
         r_points, g_points, b_points, a_points = [], [], [], []
         rg_points, gb_points, rb_points, rgb_points = [], [], [], []
-        if self.radio_channel_red.isChecked() or self.radio_channel_rgb.isChecked():
+        if check in ("R", "RGB"):
             r_points = [QPointF(i, r[i]) for i in range(256)]
-        if self.radio_channel_green.isChecked() or self.radio_channel_rgb.isChecked():
+        if check in ("G", "RGB"):
             g_points = [QPointF(i, g[i]) for i in range(256)]
-        if self.radio_channel_blue.isChecked() or self.radio_channel_rgb.isChecked():
+        if check in ("B", "RGB"):
             b_points = [QPointF(i, b[i]) for i in range(256)]
-        if self.radio_channel_alpha.isChecked():
+        if check == "A":
             a_points = [QPointF(i, a[i]) for i in range(256)]
-        if self.radio_channel_rgb.isChecked():
-            rg_points = [QPointF(i, rg[i]) for i in range(256)]
-            gb_points = [QPointF(i, gb[i]) for i in range(256)]
-            rb_points = [QPointF(i, rb[i]) for i in range(256)]
+        if check == "RGB":
+            rg_points  = [QPointF(i, rg[i]) for i in range(256)]
+            gb_points  = [QPointF(i, gb[i]) for i in range(256)]
+            rb_points  = [QPointF(i, rb[i]) for i in range(256)]
             rgb_points = [QPointF(i, rgb[i]) for i in range(256)]
 
 
@@ -442,6 +423,6 @@ class UI(abcUI):
 
     def __del__(self):
         print("图片图表 释放")
-    def ui__save(self) -> dict | None:
+    def ui_save(self):
         # 实现时请务必更改函数名
         pass

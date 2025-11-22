@@ -51,7 +51,7 @@ class UI(abcExt.UI):
         layout.addStretch()
 
     
-    def update(self, threads: int):
+    def update(self, arr, threads: int):
         fmt_enum = self.list.currentIndex()
         fmt_enum_ct = c_int(fmt_enum)
         return byref(fmt_enum_ct), sizeof(fmt_enum_ct)

@@ -4,7 +4,7 @@ from ctypes import CDLL, c_void_p, c_size_t, c_char_p, POINTER, Structure, cast,
 import string
 import weakref
 
-from PySide6.QtWidgets import QWidget, QLabel, QCheckBox, QSlider, QVBoxLayout, QHBoxLayout, QLineEdit, QLayout, QTextEdit
+from PySide6.QtWidgets import QWidget, QLabel, QCheckBox, QSlider, QVBoxLayout, QHBoxLayout, QLineEdit, QLayout, QTextEdit, QSpinBox, QSizePolicy
 
 from PySide6.QtCore import Qt, QTimer, QObject, Signal
 
@@ -72,19 +72,18 @@ class UI(abcExt.UI):
         line1_layout.addWidget(num_base_widget, alignment = Qt.AlignmentFlag.AlignCenter)
 
         num_base_layout.addWidget(QLabel("进制(2~62): "))
-        self.num_base_edit = QLineEdit()
-        self.num_base_edit.setMinimumWidth(25)
-        self.num_base_edit.setValidator(QIntValidator(2, 62))
-        self.num_base_edit.setText(str(self.num_base))
+        self.num_base_edit = QSpinBox()
+        self.num_base_edit.setFixedWidth(40)
+        self.num_base_edit.setRange(2, 62)
+        self.num_base_edit.setValue(self.num_base)
         num_base_layout.addWidget(self.num_base_edit)
         def _on_num_base_edit():
             self = self_ref()
             if self is None: return
-            if self.num_base_edit.hasAcceptableInput():
-                self.num_base = int(self.num_base_edit.text())
-                self.initLUT()
-                self.img2arr_notify_update()
-        self.num_base_edit.textChanged.connect(_on_num_base_edit)
+            self.num_base = self.num_base_edit.value()
+            self.initLUT()
+            self.img2arr_notify_update()
+        self.num_base_edit.valueChanged.connect(_on_num_base_edit)
 
         arr_prefix_widget = QWidget()
         arr_prefix_layout = QHBoxLayout()
@@ -181,7 +180,7 @@ class UI(abcExt.UI):
         self.num_suffix_edit.textChanged.connect(_on_num_suffix_edit)
 
         # 底部弹簧
-        layout.addStretch(1)
+        layout.addStretch()
     
     def initLUT(self):
         self.LUT: list[str] = []
@@ -228,7 +227,7 @@ class UI(abcExt.UI):
         ]
         _pack_ = 1
     
-    def update(self, threads: int):
+    def update(self, arr, threads: int):
         args = self.args_t()
 
         args.num_str_len = len(self.LUT[0])
