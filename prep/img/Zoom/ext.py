@@ -6,21 +6,18 @@ import struct
 import time
 import weakref
 
-from PySide6.QtWidgets import QWidget, QLabel, QSlider, QVBoxLayout, QHBoxLayout, QComboBox, QCheckBox, QSpinBox
+from PySide6.QtWidgets import QWidget, QLabel, QVBoxLayout, QHBoxLayout, QComboBox, QCheckBox, QSpinBox
 
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import Qt, Signal, QObject
 
 from PySide6.QtGui import QPalette, QColor, QFontMetrics
 
 
 from lib.ExtensionPyABC import abcExt
 
-
-
 class UI(abcExt.UI):
     def __init__(self):
         pass
-    """用于绘制自己的UI空间。需要PySide6。若没有此函数，则表示没有UI。不需要构造函数和析构函数。"""
     def ui_init(self, widget: QWidget, ext: CDLL, save: dict | None):
         self_ref = weakref.ref(self)
         self.ext = ext
@@ -60,8 +57,8 @@ class UI(abcExt.UI):
         spin_outy_layout.addStretch()
 
         # 绑定刷新事件
-        self.spin_outx.valueChanged.connect(lambda _: self.img2arr_notify_update())
-        self.spin_outy.valueChanged.connect(lambda _: self.img2arr_notify_update())
+        self.spin_outx.valueChanged.connect(lambda _: self.Update())
+        self.spin_outy.valueChanged.connect(lambda _: self.Update())
 
         # 下拉列表
         method_layout = QHBoxLayout()
@@ -75,32 +72,47 @@ class UI(abcExt.UI):
         method_text.setToolTip("越上面的，性能越高，质量越低\n越下面的，性能越低，质量越高")
         self.method = QComboBox()
         method_layout.addWidget(self.method)
-        self.method.addItems([
+        self.method_list = [
             "最近邻插值",
             "双线性插值",
             "双三次插值",
             "Lanczos插值"
-        ])
+        ]
+        self.method.addItems(self.method_list)
         self.method.setCurrentIndex(2) # 默认双三次插值
         # 更新事件
-        self.method.currentIndexChanged.connect(lambda _: self.img2arr_notify_update())
+        self.method.currentIndexChanged.connect(lambda _: self.Update())
+
+        # 卷积核半径
+        self.core_widget = QWidget()
+        layout.addWidget(self.core_widget)
+        core_layout = QHBoxLayout()
+        core_layout.setContentsMargins(0, 0, 0, 0)
+        self.core_widget.setLayout(core_layout)
+        self.core_text = QLabel("卷积核半径：")
+        core_layout.addWidget(self.core_text)
+        self.core_radius = QSpinBox()
+        self.core_radius.setFixedWidth(100)
+        self.core_radius.setRange(0, 2**31-1)
+        self.core_radius.setValue(3)
+        self.core_radius.setSingleStep(1)
+        core_layout.addWidget(self.core_radius)
+        core_layout.addStretch()
+        # 更新事件
+        self.core_radius.valueChanged.connect(lambda _: self.Update())
 
         # LUT优化多选框
         self.lut_optimize = QCheckBox("LUT优化")
         self.lut_optimize.setChecked(True)
         self.lut_optimize.setToolTip("以空间换时间，能大幅提升处理性能\n不过嘛...需要占用一丢丢内存")
         layout.addWidget(self.lut_optimize)
-        self.lut_optimize.stateChanged.connect(lambda _: self.img2arr_notify_update())
+        self.lut_optimize.stateChanged.connect(lambda _: self.Update())
         
-        # 更新提示文本
-        self.UpdateTiptext()
-        
-
-    # 更新提示文本
-    def UpdateTiptext(self):
-        self.img2arr_UpdateTiptext("text")
+    
+    # 更新
     def Update(self):
-        self.UpdateTiptext()
+        has_core = self.method.currentIndex() not in (0, 1)
+        self.core_widget.setVisible(has_core)
         self.img2arr_notify_update()
     
     class args_t(Structure):
@@ -113,15 +125,23 @@ class UI(abcExt.UI):
         #         BICUBIC = 2, // 双三次插值
         #         LANCZOS = 3, // Lanczos插值
         #     }method;
-        # bool lut_optimize; // 是否启用LUT优化。这能够大幅提升性能，但需要一丢丢内存。
-        # float *lut_x_buffer; // x轴LUT内存。其大小为：图像宽*(右卷积核索引 - 左卷积核索引 + 1)。
-        # float *lut_y_buffer; // y轴LUT内存。其大小为：图像高*(上卷积核索引 - 下卷积核索引 + 1)。
-        # (atomic_)size_t* thread_lock; // 线程锁。
+        #     int core_left; // 卷积核左边界，通常是负数。仅对于使用自定义卷积缩放的算法有效。
+        #     int core_right; // 卷积核右边界，通常是正数。仅对于使用自定义卷积缩放的算法有效。
+        #     int core_top; // 卷积核上边界，通常是负数。仅对于使用自定义卷积缩放的算法有效。
+        #     int core_bottom; // 卷积核下边界，通常是正数。仅对于使用自定义卷积缩放的算法有效。
+        #     bool lut_optimize; // 是否启用LUT优化。这能够大幅提升性能，但需要一丢丢内存。
+        #     float *lut_x_buffer; // x轴LUT内存。其大小为：图像宽*(右卷积核索引 - 左卷积核索引 + 1)。
+        #     float *lut_y_buffer; // y轴LUT内存。其大小为：图像高*(上卷积核索引 - 下卷积核索引 + 1)。
+        #     (atomic_)size_t* thread_lock; // 线程锁。
         # }
         _fields_ = [
             ("sx", c_float),
             ("sy", c_float),
             ("method", c_int),
+            ("core_left", c_int),
+            ("core_right", c_int),
+            ("core_top", c_int),
+            ("core_bottom", c_int),
             ("lut_optimize", c_bool),
             ("lut_x_buffer", POINTER(c_float)),
             ("lut_y_buffer", POINTER(c_float)),
@@ -130,8 +150,8 @@ class UI(abcExt.UI):
         _pack_ = 1
     def update(self, arr, threads):
         # arr shape: (H, W, C)
-        core_left, core_right = -2, 2
-        core_top, core_bottom = -2, 2
+        core_left, core_right = -self.core_radius.value(), self.core_radius.value()
+        core_top, core_bottom = -self.core_radius.value(), self.core_radius.value()
         out_w = self.spin_outx.value()
         out_h = self.spin_outy.value()
         # 初始化原子变量锁
@@ -148,12 +168,17 @@ class UI(abcExt.UI):
             out_w / arr.shape[1],
             out_h / arr.shape[0],
             self.method.currentIndex(),
+            core_left, core_right, core_top, core_bottom,
             self.lut_optimize.isChecked(),
             lut_x_buffer,
             lut_y_buffer,
             atm
         )
-        
+
+        # 刷新提示文本
+        self.img2arr_UpdateTiptext(
+            f"({arr.shape[1]}, {arr.shape[0]}) → ({out_w}, {out_h}), {self.method_list[self.method.currentIndex()]}"
+        )
 
         return (byref(args), sizeof(args))
 

@@ -58,6 +58,10 @@ typedef enum {
 typedef struct {
     float sx, sy;
     scale_mode mode;
+    int core_left; // 卷积核左边界，通常是负数。仅对于使用自定义卷积缩放的算法有效。
+    int core_right; // 卷积核右边界，通常是正数。仅对于使用自定义卷积缩放的算法有效。
+    int core_top; // 卷积核上边界，通常是负数。仅对于使用自定义卷积缩放的算法有效。
+    int core_bottom; // 卷积核下边界，通常是正数。仅对于使用自定义卷积缩放的算法有效。
     bool lut_optimize;
     float *lut_x_buffer;
     float *lut_y_buffer;
@@ -409,10 +413,21 @@ static int main_enum(args_t *args, float scale_x, float scale_y, size_t in_w, si
             main_bilinear(scale_x, scale_y, in_w, in_h, out_w, out_h, in_buf, out_buf, start_p, end_p);
             break;
         case SCALE_BICUBIC:
-            main_generic_custom_scale(args, scale_x, scale_y, in_w, in_h, out_w, out_h, in_buf, out_buf, threads, idx, -2, 2, -2, 2, cubic_weight);
+            main_generic_custom_scale(args, scale_x, scale_y, 
+                in_w, in_h, out_w, out_h, 
+                in_buf, out_buf, 
+                threads, idx,
+                args->core_left, args->core_right, args->core_top, args->core_bottom,
+
+                cubic_weight);
             break;
         case SCALE_LANCZOS:
-            main_generic_custom_scale(args, scale_x, scale_y, in_w, in_h, out_w, out_h, in_buf, out_buf, threads, idx, -3, 3, -3, 3, lanczos_weight);
+            main_generic_custom_scale(args, scale_x, scale_y, 
+                in_w, in_h, out_w, out_h, 
+                in_buf, out_buf, 
+                threads, idx,
+                args->core_left, args->core_right, args->core_top, args->core_bottom,
+                lanczos_weight);
         default:
             return -1;
     }

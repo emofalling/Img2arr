@@ -1704,7 +1704,7 @@ class PageMain(QWidget):
     def __del__(self):
         logger.info("主页面真的被删除了")
 
-PageMainSelf = TypeVar('PageMainSelf', bound='PageMain')
+PageMainSelf = TypeVar('PageMainSelf', bound=PageMain)
 
 class PreProcessor(QObject):
     def __init__(self, pagemain_ref: weakref.ref[PageMainSelf], name: str, title: str, py: ExtensionPyABC.abcExt.UI | None):

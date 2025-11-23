@@ -7,6 +7,10 @@
         BICUBIC = 2, // 双三次插值
         LANCZOS = 3, // Lanczos插值
     };
+    int core_left; // 卷积核左边界，通常是负数。仅对于使用自定义卷积缩放的算法有效。
+    int core_right; // 卷积核右边界，通常是正数。仅对于使用自定义卷积缩放的算法有效。
+    int core_top; // 卷积核上边界，通常是负数。仅对于使用自定义卷积缩放的算法有效。
+    int core_bottom; // 卷积核下边界，通常是正数。仅对于使用自定义卷积缩放的算法有效。
     bool lut_optimize; // 是否启用LUT优化。这能够大幅提升性能，但需要一丢丢内存。
     float *lut_x_buffer; // x轴LUT内存。其大小为：图像宽*(右卷积核索引 - 左卷积核索引 + 1)。
     float *lut_y_buffer; // y轴LUT内存。其大小为：图像高*(上卷积核索引 - 下卷积核索引 + 1)。
