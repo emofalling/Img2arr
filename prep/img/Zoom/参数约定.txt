@@ -7,4 +7,8 @@
         BICUBIC = 2, // 双三次插值
         LANCZOS = 3, // Lanczos插值
     };
+    bool lut_optimize; // 是否启用LUT优化。这能够大幅提升性能，但需要一丢丢内存。
+    float *lut_x_buffer; // x轴LUT内存。其大小为：图像宽*(右卷积核索引 - 左卷积核索引 + 1)。
+    float *lut_y_buffer; // y轴LUT内存。其大小为：图像高*(上卷积核索引 - 下卷积核索引 + 1)。
+    (atomic_)size_t* thread_lock; // 线程锁。
 }

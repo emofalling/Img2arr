@@ -1,12 +1,12 @@
 import json
-from numpy import uint8
+from numpy import uint8, nan
 from numpy.typing import NDArray
-from ctypes import CDLL, c_void_p, c_uint8, c_int, POINTER
+from ctypes import CDLL, c_float, c_bool, c_int, c_size_t, Structure, sizeof, byref, POINTER
 import struct
 import time
 import weakref
 
-from PySide6.QtWidgets import QWidget, QLabel, QSlider, QVBoxLayout, QHBoxLayout, QComboBox, QSpinBox
+from PySide6.QtWidgets import QWidget, QLabel, QSlider, QVBoxLayout, QHBoxLayout, QComboBox, QCheckBox, QSpinBox
 
 from PySide6.QtCore import Qt, QTimer
 
@@ -24,6 +24,9 @@ class UI(abcExt.UI):
     def ui_init(self, widget: QWidget, ext: CDLL, save: dict | None):
         self_ref = weakref.ref(self)
         self.ext = ext
+        # SHARED (atomic_)size_t* create_atomic_size_t(size_t v)
+        self.ext.create_atomic_size_t.argtypes = [c_size_t]
+        self.ext.create_atomic_size_t.restype = POINTER(c_size_t)
         # 创建布局
         layout = QVBoxLayout(widget)
         layout.setContentsMargins(10, 10, 10, 10)
@@ -78,9 +81,16 @@ class UI(abcExt.UI):
             "双三次插值",
             "Lanczos插值"
         ])
-        self.method.setCurrentIndex(1) # 默认双线性插值
+        self.method.setCurrentIndex(2) # 默认双三次插值
         # 更新事件
         self.method.currentIndexChanged.connect(lambda _: self.img2arr_notify_update())
+
+        # LUT优化多选框
+        self.lut_optimize = QCheckBox("LUT优化")
+        self.lut_optimize.setChecked(True)
+        self.lut_optimize.setToolTip("以空间换时间，能大幅提升处理性能\n不过嘛...需要占用一丢丢内存")
+        layout.addWidget(self.lut_optimize)
+        self.lut_optimize.stateChanged.connect(lambda _: self.img2arr_notify_update())
         
         # 更新提示文本
         self.UpdateTiptext()
@@ -92,8 +102,8 @@ class UI(abcExt.UI):
     def Update(self):
         self.UpdateTiptext()
         self.img2arr_notify_update()
-    def update(self, arr, threads):
-        # 构造参数
+    
+    class args_t(Structure):
         # [pack]struct{
         #     float sx; // x方向缩放比例
         #     float sy; // y方向缩放比例
@@ -102,11 +112,50 @@ class UI(abcExt.UI):
         #         BILINEAR = 1, // 双线性插值
         #         BICUBIC = 2, // 双三次插值
         #         LANCZOS = 3, // Lanczos插值
-        #     };
+        #     }method;
+        # bool lut_optimize; // 是否启用LUT优化。这能够大幅提升性能，但需要一丢丢内存。
+        # float *lut_x_buffer; // x轴LUT内存。其大小为：图像宽*(右卷积核索引 - 左卷积核索引 + 1)。
+        # float *lut_y_buffer; // y轴LUT内存。其大小为：图像高*(上卷积核索引 - 下卷积核索引 + 1)。
+        # (atomic_)size_t* thread_lock; // 线程锁。
         # }
+        _fields_ = [
+            ("sx", c_float),
+            ("sy", c_float),
+            ("method", c_int),
+            ("lut_optimize", c_bool),
+            ("lut_x_buffer", POINTER(c_float)),
+            ("lut_y_buffer", POINTER(c_float)),
+            ("thread_lock", POINTER(c_size_t))
+        ]
+        _pack_ = 1
+    def update(self, arr, threads):
         # arr shape: (H, W, C)
-        arg = struct.pack("ffi", self.spin_outx.value() / arr.shape[1], self.spin_outy.value() / arr.shape[0], self.method.currentIndex())
-        return (arg, len(arg))
+        core_left, core_right = -2, 2
+        core_top, core_bottom = -2, 2
+        out_w = self.spin_outx.value()
+        out_h = self.spin_outy.value()
+        # 初始化原子变量锁
+        atm = self.ext.create_atomic_size_t(threads)
+
+        # 不能直接lut_x_buffer lut_y_buffer！不然这些最终会因局部变量会被销毁。
+        if self.lut_optimize.isChecked():
+            lut_x_buffer = (c_float * (out_w * (core_right - core_left + 1)))(nan)
+            lut_y_buffer = (c_float * (out_h * (core_bottom - core_top + 1)))(nan)
+        else:
+            lut_x_buffer = None
+            lut_y_buffer = None
+        args = self.args_t(
+            out_w / arr.shape[1],
+            out_h / arr.shape[0],
+            self.method.currentIndex(),
+            self.lut_optimize.isChecked(),
+            lut_x_buffer,
+            lut_y_buffer,
+            atm
+        )
+        
+
+        return (byref(args), sizeof(args))
 
 
         

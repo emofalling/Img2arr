@@ -1,6 +1,8 @@
 #include <stdint.h>
+#include <stdlib.h>
 #include <stdbool.h>
 #include <stddef.h>
+#include <stdatomic.h>
 #include <math.h>
 #include <float.h>
 
@@ -14,6 +16,9 @@
 #warning "Not found M_PI in math.h, using 3.141592653589793238462643"
 #define M_PI 3.141592653589793238462643
 #endif
+
+#define max(a, b) ((a) > (b) ? (a) : (b))
+#define min(a, b) ((a) < (b) ? (a) : (b))
 
 SHARED const char img2arr_ext_sign[] = "img2arr.prep.img.Zoom";
 
@@ -33,8 +38,15 @@ enum{
         BICUBIC = 2, // 双三次插值
         LANCZOS = 3, // Lanczos插值
     };
+    bool lut_optimize; // 是否启用LUT优化。这能够大幅提升性能，但需要一丢丢内存。
 }
 */
+
+SHARED atomic_size_t* create_atomic_size_t(size_t v){
+    atomic_size_t* p = (atomic_size_t*)malloc(sizeof(atomic_size_t));
+    atomic_init(p, v);
+    return p;
+}
 
 typedef enum {
     SCALE_NEAREST = 0,
@@ -46,6 +58,10 @@ typedef enum {
 typedef struct {
     float sx, sy;
     scale_mode mode;
+    bool lut_optimize;
+    float *lut_x_buffer;
+    float *lut_y_buffer;
+    atomic_size_t* thread_lock;
 }__attribute__((packed)) args_t;
 
 #define round5(x) ((x) + 0.5f)
@@ -126,7 +142,7 @@ int main_bilinear(float scale_x, float scale_y,
             uint8_t p10 = in_buf[(y0 * in_w + x1) * 4 + c];
             uint8_t p11 = in_buf[(y1 * in_w + x1) * 4 + c];
             
-            // 计算插值结果并四舍五入
+            // 计算平均值并四舍五入
             float result = w00 * p00 + w01 * p01 + w10 * p10 + w11 * p11;
             out_buf[p * 4 + c] = round5(result);
         }
@@ -134,15 +150,55 @@ int main_bilinear(float scale_x, float scale_y,
     return 0;
 }
 
-typedef float (*weight_func)(float);
+typedef float (*weight_func)(float dis, int left, int right);
 
+static inline float cubic_weight(float dis, int left, int right) {
+    dis = fabsf(dis);
+    float a = -0.75;
+    if(dis < 1.0f){
+        // (a+2)x^3 - (a+3)x^2 + 1
+        return (a + 2.0f) * dis * dis * dis - (a + 3.0f) * dis * dis + 1.0f;
+    }
+    if(dis < 2.0f){
+        // ax^3 - 5ax^2 + 8ax - 4a
+        return a * dis * dis * dis - 5.0f * a * dis * dis + 8.0f * a * dis - 4.0f * a;
+    }
+    return 0.0f;
+}
+static inline float sinc(float x) {
+    x = M_PI * x;
+    /*
+    if (x < 1e-6f) {
+        return 1.0f;
+    } else {
+        return sinf(x) / x;
+    }
+    */
+   return sinf(x) / x;
+}
+static inline float lanczos_weight(float dis, int left, int right) {
+    // 动态计算a的值
+    int a = max(-left, right);
+    // 套函数
+    if(fabsf(dis) >= a){
+        return 0.0f;
+    }else{
+        float ret = sinc(dis) * sinc(dis / a);
+        if(isinf(ret) || isnan(ret)){
+            return 1.0f;
+        }
+        return ret;
+    }
+}
 
-int main_generel_convolution_scale(float scale_x, float scale_y,
-                       size_t in_w, size_t in_h, 
-                       size_t out_w, size_t out_h, 
-                       uint8_t* in_buf, uint8_t* out_buf, 
-                       size_t start_p, size_t end_p, weight_func core) {
-    
+int main_generic_custom_scale_nolut(args_t *args, float scale_x, float scale_y,
+                       size_t in_w, size_t in_h,
+                       size_t out_w, size_t out_h,
+                       uint8_t* in_buf, uint8_t* out_buf,
+                       size_t start_p, size_t end_p,
+                       int core_left, int core_right, int core_top, int core_bottom,
+                       weight_func core) {
+    // 遍历输出像素
     for(size_t p = start_p; p < end_p; p++) {
         size_t x = p % out_w;
         size_t y = p / out_w;
@@ -154,84 +210,209 @@ int main_generel_convolution_scale(float scale_x, float scale_y,
         // 获取基准整数坐标
         int base_x = floorf(src_x_float);
         int base_y = floorf(src_y_float);
-        
+        // 开始
         for(int c = 0; c < 4; c++) {
+            // 开始卷积
             float sum = 0.0f;
             float weight_sum = 0.0f;
-            // 遍历周围[-1~2][-1~2]共16个像素
-            for(int i = -1; i <= 2; i++) {
-                for(int j = -1; j <= 2; j++) {
-                    int sample_x = base_x + i;
-                    int sample_y = base_y + j;
-                    
-                    // 边界检查
-                    sample_x = clip(sample_x, 0, in_w - 1);
+            for(int dx = core_left; dx <= core_right; dx++) {
+                // 采样点
+                int sample_x = base_x + dx;
+                // 边界限制(等效于边缘扩展)
+                sample_x = clip(sample_x, 0, in_w - 1);
+                // 计算实际距离
+                float dis_x = src_x_float - sample_x;
+                for(int dy = core_left; dy <= core_right; dy++) {
+                    // 采样点
+                    int sample_y = base_y + dy;
+                    // 边界限制(等效于边缘扩展)
                     sample_y = clip(sample_y, 0, in_h - 1);
-                    
-                    // 计算实际距离（关键修正！）
-                    float dx = src_x_float - sample_x;
-                    float dy = src_y_float - sample_y;
-                    
-                    // 使用实际距离计算权重
-                    float weight = core(dx) * core(dy);
-                    
+                    // 计算实际距离
+                    float dis_y = src_y_float - sample_y;
+
+                    // 计算权重
+                    float weight = core(dis_x, core_left, core_right) * core(dis_y, core_left, core_right);
+
+                    // 获取像素并加权求和
                     uint8_t pixel = in_buf[(sample_y * in_w + sample_x) * 4 + c];
                     sum += weight * pixel;
                     weight_sum += weight;
                 }
             }
-            
+
             // 归一化并限制范围
             float result = sum / weight_sum;
             result = clip(result, 0.0f, 255.0f);
             out_buf[p * 4 + c] = round5(result);
-
         }
     }
     return 0;
 }
 
-// 双三次插值核函数（Catmull-Rom 样条）
-static float cubic_weight(float x) {
-    x = fabsf(x);
-    if (x < 1.0f) {
-        return 1.5f * x * x * x - 2.5f * x * x + 1.0f;
-    } else if (x < 2.0f) {
-        return -0.5f * x * x * x + 2.5f * x * x - 4.0f * x + 2.0f;
-    } else {
-        return 0.0f;
+// 通用自定义插值缩放函数（带LUT优化，时间复杂度从O(n^2)降至O(n)）
+int main_generic_custom_scale_lut(args_t *args, float scale_x, float scale_y,
+                       size_t in_w, size_t in_h,
+                       size_t out_w, size_t out_h,
+                       uint8_t* in_buf, uint8_t* out_buf,
+                       size_t threads, size_t idx,
+                       int core_left, int core_right, int core_top, int core_bottom,
+                       weight_func core,
+                       atomic_size_t* weight_lut_nonfill_threads) 
+                     {
+    // 计算当前线程处理的lut的x y坐标范围
+    const size_t lut_x_opstart = out_w * idx / threads;
+    const size_t lut_x_opend = out_w * (idx + 1) / threads;
+    const size_t lut_y_opstart = out_h * idx / threads;
+    const size_t lut_y_opend = out_h * (idx + 1) / threads;
+    // 计算卷积图片时像素的x y坐标范围
+    const size_t pixels = out_w * out_h;
+    const size_t start_p = pixels * idx / threads;
+    const size_t end_p = pixels * (idx + 1) / threads;
+    // 计算核长宽
+    const int core_width = core_right - core_left + 1;
+    const int core_height = core_bottom - core_top + 1;
+
+    // 计算x部分
+    for(size_t x = lut_x_opstart; x < lut_x_opend; x++) {
+        // 计算浮点源坐标
+        float src_x_float = x / scale_x;
+        // 获取基准整数坐标
+        int base_x = floorf(src_x_float);
+        // 开始
+        for(int dx = core_left, di = 0; dx <= core_right; dx++, di++) {
+            // 采样点
+            int sample_x = base_x + dx;
+            // 边界限制(等效于边缘扩展)
+            sample_x = clip(sample_x, 0, in_w - 1);
+            // 计算实际距离
+            float dis_x = src_x_float - sample_x;
+            // 计算权重
+            float weight = core(dis_x, core_left, core_right);
+            // 存入LUT
+            args->lut_x_buffer[x * core_width + di] = weight;
+        }
+    }
+    // 计算y部分
+    for(size_t y = lut_y_opstart; y < lut_y_opend; y++) {
+        // 计算浮点源坐标
+        float src_y_float = y / scale_y;
+        // 获取基准整数坐标
+        int base_y = floorf(src_y_float);
+        // 开始
+        for(int dy = core_top, di = 0; dy <= core_bottom; dy++, di++) {
+            // 采样点
+            int sample_y = base_y + dy;
+            // 边界限制(等效于边缘扩展)
+            sample_y = clip(sample_y, 0, in_h - 1);
+            // 计算实际距离
+            float dis_y = src_y_float - sample_y;
+            // 计算权重
+            float weight = core(dis_y, core_top, core_bottom);
+            // 存入LUT
+            args->lut_y_buffer[y * core_height + di] = weight;
+        }
+    }
+    // 减原子变量
+    atomic_fetch_sub_explicit(weight_lut_nonfill_threads, 1, memory_order_release);
+    // 等待所有线程完成
+    while(atomic_load_explicit(weight_lut_nonfill_threads, memory_order_acquire) != 0){
+        // 忙等待
+        #ifdef __x86_64__
+            __builtin_ia32_pause();  // x86 PAUSE指令，降低功耗
+        #elif defined(__aarch64__)
+            __asm__ __volatile__("yield" ::: "memory");  // ARM YIELD
+        #endif
+    }
+    
+    // 开始卷积，使用预计算好的LUT
+    // 遍历输出像素
+    for(size_t p = start_p; p < end_p; p++) {
+        size_t x = p % out_w;
+        size_t y = p / out_w;
+
+        // 计算浮点源坐标
+        float src_x_float = x / scale_x;
+        float src_y_float = y / scale_y;
+        
+        // 获取基准整数坐标
+        int base_x = floorf(src_x_float);
+        int base_y = floorf(src_y_float);
+        // 开始
+        for(int c = 0; c < 4; c++) {
+            // 开始卷积
+            float sum = 0.0f;
+            float weight_sum = 0.0f;
+            for(int dx = core_left, dxi = 0; dx <= core_right; dx++, dxi++) {
+                // 采样点
+                int sample_x = base_x + dx;
+                // 边界限制(等效于边缘扩展)
+                sample_x = clip(sample_x, 0, in_w - 1);
+                // 计算实际距离
+                float dis_x = src_x_float - sample_x;
+                for(int dy = core_left, dyi = 0; dy <= core_right; dy++, dyi++) {
+                    // 采样点
+                    int sample_y = base_y + dy;
+                    // 边界限制(等效于边缘扩展)
+                    sample_y = clip(sample_y, 0, in_h - 1);
+                    // 计算实际距离
+                    float dis_y = src_y_float - sample_y;
+
+                    // 计算权重
+                    float weight = args->lut_x_buffer[x * core_width + dxi] * args->lut_y_buffer[y * core_height + dyi];
+
+                    // 获取像素并加权求和
+                    uint8_t pixel = in_buf[(sample_y * in_w + sample_x) * 4 + c];
+                    sum += weight * pixel;
+                    weight_sum += weight;
+                }
+            }
+
+            // 归一化并限制范围
+            float result = sum / weight_sum;
+            result = clip(result, 0.0f, 255.0f);
+            out_buf[p * 4 + c] = round5(result);
+        }
+    }
+    return 0;
+}
+
+// 通用自定义插值缩放函数
+int main_generic_custom_scale(args_t *args, float scale_x, float scale_y,
+                       size_t in_w, size_t in_h,
+                       size_t out_w, size_t out_h,
+                       uint8_t* in_buf, uint8_t* out_buf,
+                       size_t threads, size_t idx,
+                       int core_left, int core_right, int core_top, int core_bottom,
+                       weight_func core) {
+    if(args->lut_optimize){
+
+        return main_generic_custom_scale_lut(args, scale_x, scale_y, in_w, in_h, out_w, out_h, in_buf, out_buf, threads, idx, core_left, core_right, core_top, core_bottom, core, args->thread_lock);
+    }
+    else{
+        const size_t pixels = out_w * out_h;
+        const size_t start_p = pixels * idx / threads;
+        const size_t end_p = pixels * (idx + 1) / threads;
+        return main_generic_custom_scale_nolut(args, scale_x, scale_y, in_w, in_h, out_w, out_h, in_buf, out_buf, start_p, end_p, core_left, core_right, core_top, core_bottom, core);
     }
 }
 
-// Lanzcos插值核函数(a = 3)
-static float lanzcos_weight(float x) {
-    x = fabsf(x);
-    float a = 3.0f;
-    if(x < 1e-6f){
-        return 1.0f;
-    }else if(x < a){        
-        float pi_x = M_PI * x;
-        float pi_x_a = M_PI * x / a;
-        return (sinf(pi_x) * sinf(pi_x_a)) / (pi_x * pi_x_a) * a;
-    }else{
-        return 0.0f;
-    }
+static int main_enum(args_t *args, float scale_x, float scale_y, size_t in_w, size_t in_h, size_t out_w, size_t out_h, uint8_t* in_buf, uint8_t* out_buf, size_t threads, size_t idx){
+    const size_t pixels = out_w * out_h;
+    const size_t start_p = pixels * idx / threads;
+    const size_t end_p = pixels * (idx + 1) / threads;
 
-}
-
-static int main_enum(scale_mode mode, float scale_x, float scale_y, size_t in_w, size_t in_h, size_t out_x, size_t out_y, uint8_t* in_buf, uint8_t* out_buf, size_t start_p, size_t end_p){
-    switch(mode){
+    switch(args->mode){
         case SCALE_NEAREST:
-            main_nearest(scale_x, scale_y, in_w, in_h, out_x, out_y, in_buf, out_buf, start_p, end_p);
+            main_nearest(scale_x, scale_y, in_w, in_h, out_w, out_h, in_buf, out_buf, start_p, end_p);
             break;
         case SCALE_BILINEAR:
-            main_bilinear(scale_x, scale_y, in_w, in_h, out_x, out_y, in_buf, out_buf, start_p, end_p);
+            main_bilinear(scale_x, scale_y, in_w, in_h, out_w, out_h, in_buf, out_buf, start_p, end_p);
             break;
         case SCALE_BICUBIC:
-            main_generel_convolution_scale(scale_x, scale_y, in_w, in_h, out_x, out_y, in_buf, out_buf, start_p, end_p, cubic_weight);
+            main_generic_custom_scale(args, scale_x, scale_y, in_w, in_h, out_w, out_h, in_buf, out_buf, threads, idx, -2, 2, -2, 2, cubic_weight);
             break;
         case SCALE_LANCZOS:
-            main_generel_convolution_scale(scale_x, scale_y, in_w, in_h, out_x, out_y, in_buf, out_buf, start_p, end_p, lanzcos_weight);
+            main_generic_custom_scale(args, scale_x, scale_y, in_w, in_h, out_w, out_h, in_buf, out_buf, threads, idx, -3, 3, -3, 3, lanczos_weight);
         default:
             return -1;
     }
@@ -239,14 +420,14 @@ static int main_enum(scale_mode mode, float scale_x, float scale_y, size_t in_w,
 }
 
 SHARED int f1(size_t threads, size_t idx, args_t* args, uint8_t* in_buf, uint8_t* out_buf, size_t in_shape[2]){
-    const size_t out_x = round5(in_shape[1] * args->sx);
-    const size_t out_y = round5(in_shape[0] * args->sy);
+    const size_t out_w = round5(in_shape[1] * args->sx);
+    const size_t out_h = round5(in_shape[0] * args->sy);
 
-    const size_t pixels = 1 * out_x * out_y;
+    const size_t pixels = out_w * out_h;
     const size_t start_p = pixels * idx / threads;
     const size_t end_p = pixels * (idx + 1) / threads;
 
-    main_enum(args->mode, args->sx, args->sy, in_shape[1], in_shape[0], out_x, out_y, in_buf, out_buf, start_p, end_p);
+    main_enum(args, args->sx, args->sy, in_shape[1], in_shape[0], out_w, out_h, in_buf, out_buf, threads, idx);
 
 
     return 0;
@@ -254,10 +435,10 @@ SHARED int f1(size_t threads, size_t idx, args_t* args, uint8_t* in_buf, uint8_t
 
 SHARED int f0(args_t* args, uint8_t *in_buf, uint8_t *out_buf, size_t in_shape[2]){
     // 单线程缩放
-    const size_t out_x = round5(in_shape[1] * args->sx);
-    const size_t out_y = round5(in_shape[0] * args->sy);
+    const size_t out_w = round5(in_shape[1] * args->sx);
+    const size_t out_h = round5(in_shape[0] * args->sy);
 
-    main_enum(args->mode, args->sx, args->sy, in_shape[1], in_shape[0], out_x, out_y, in_buf, out_buf, 0, out_x * out_y);
+    main_enum(args, args->sx, args->sy, in_shape[1], in_shape[0], out_w, out_h, in_buf, out_buf, 1, 0);
 
     return 0;
 }
