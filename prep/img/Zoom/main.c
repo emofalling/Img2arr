@@ -17,6 +17,14 @@
 #define M_PI 3.141592653589793238462643
 #endif
 
+#ifdef __GNUC__
+#define likely(x)   __builtin_expect(!!(x), 1)
+#define unlikely(x) __builtin_expect(!!(x), 0)
+#else
+#define likely(x)   (x)
+#define unlikely(x) (x)
+#endif
+
 #define max(a, b) ((a) > (b) ? (a) : (b))
 #define min(a, b) ((a) < (b) ? (a) : (b))
 
@@ -42,8 +50,7 @@ enum{
 }
 */
 
-SHARED atomic_size_t* create_atomic_size_t(size_t v){
-    atomic_size_t* p = (atomic_size_t*)malloc(sizeof(atomic_size_t));
+SHARED atomic_size_t* atomic_init_size_t(atomic_size_t* p, size_t v){
     atomic_init(p, v);
     return p;
 }
@@ -158,7 +165,10 @@ typedef float (*weight_func)(float dis, int left, int right);
 
 static inline float cubic_weight(float dis, int left, int right) {
     dis = fabsf(dis);
-    float a = -0.75;
+    float a = -0.75f;
+    if(unlikely(dis == 0.0f)){
+        return 1.0f;
+    }
     if(dis < 1.0f){
         // (a+2)x^3 - (a+3)x^2 + 1
         return (a + 2.0f) * dis * dis * dis - (a + 3.0f) * dis * dis + 1.0f;
@@ -184,7 +194,7 @@ static inline float lanczos_weight(float dis, int left, int right) {
     // 动态计算a的值
     int a = max(-left, right);
     // 套函数
-    if(fabsf(dis) >= a){
+    if(unlikely(fabsf(dis) >= a)){
         return 0.0f;
     }else{
         float ret = sinc(dis) * sinc(dis / a);
@@ -195,6 +205,7 @@ static inline float lanczos_weight(float dis, int left, int right) {
     }
 }
 
+// 自定义卷积核以及范围的卷积缩放。无LUT优化。
 int main_generic_custom_scale_nolut(args_t *args, float scale_x, float scale_y,
                        size_t in_w, size_t in_h,
                        size_t out_w, size_t out_h,
@@ -202,7 +213,6 @@ int main_generic_custom_scale_nolut(args_t *args, float scale_x, float scale_y,
                        size_t start_p, size_t end_p,
                        int core_left, int core_right, int core_top, int core_bottom,
                        weight_func core) {
-    // 遍历输出像素
     for(size_t p = start_p; p < end_p; p++) {
         size_t x = p % out_w;
         size_t y = p / out_w;
@@ -214,37 +224,37 @@ int main_generic_custom_scale_nolut(args_t *args, float scale_x, float scale_y,
         // 获取基准整数坐标
         int base_x = floorf(src_x_float);
         int base_y = floorf(src_y_float);
-        // 开始
+        
+        // 计算相对于基准坐标的小数偏移量
+        float frac_x = src_x_float - base_x;
+        float frac_y = src_y_float - base_y;
+        
         for(int c = 0; c < 4; c++) {
-            // 开始卷积
             float sum = 0.0f;
             float weight_sum = 0.0f;
             for(int dx = core_left; dx <= core_right; dx++) {
-                // 采样点
                 int sample_x = base_x + dx;
-                // 边界限制(等效于边缘扩展)
                 sample_x = clip(sample_x, 0, in_w - 1);
-                // 计算实际距离
-                float dis_x = src_x_float - sample_x;
+                
+                // 相对于核中心的一维水平距离
+                float dis_x = dx - frac_x;
+                
                 for(int dy = core_left; dy <= core_right; dy++) {
-                    // 采样点
                     int sample_y = base_y + dy;
-                    // 边界限制(等效于边缘扩展)
                     sample_y = clip(sample_y, 0, in_h - 1);
-                    // 计算实际距离
-                    float dis_y = src_y_float - sample_y;
+                    
+                    // 相对于核中心的一维垂直距离
+                    float dis_y = dy - frac_y;
 
-                    // 计算权重
-                    float weight = core(dis_x, core_left, core_right) * core(dis_y, core_left, core_right);
+                    float weight = core(dis_x, core_left, core_right) * 
+                                  core(dis_y, core_left, core_right);
 
-                    // 获取像素并加权求和
                     uint8_t pixel = in_buf[(sample_y * in_w + sample_x) * 4 + c];
                     sum += weight * pixel;
                     weight_sum += weight;
                 }
             }
 
-            // 归一化并限制范围
             float result = sum / weight_sum;
             result = clip(result, 0.0f, 255.0f);
             out_buf[p * 4 + c] = round5(result);
@@ -282,14 +292,16 @@ int main_generic_custom_scale_lut(args_t *args, float scale_x, float scale_y,
         float src_x_float = x / scale_x;
         // 获取基准整数坐标
         int base_x = floorf(src_x_float);
+        // 计算相对于基准坐标的小数偏移量
+        float frac_x = src_x_float - base_x;
         // 开始
         for(int dx = core_left, di = 0; dx <= core_right; dx++, di++) {
             // 采样点
             int sample_x = base_x + dx;
             // 边界限制(等效于边缘扩展)
             sample_x = clip(sample_x, 0, in_w - 1);
-            // 计算实际距离
-            float dis_x = src_x_float - sample_x;
+            // 相对于核中心的一维水平距离
+            float dis_x = dx - frac_x;
             // 计算权重
             float weight = core(dis_x, core_left, core_right);
             // 存入LUT
@@ -302,14 +314,16 @@ int main_generic_custom_scale_lut(args_t *args, float scale_x, float scale_y,
         float src_y_float = y / scale_y;
         // 获取基准整数坐标
         int base_y = floorf(src_y_float);
+        // 计算相对于基准坐标的小数偏移量
+        float frac_y = src_y_float - base_y;
         // 开始
         for(int dy = core_top, di = 0; dy <= core_bottom; dy++, di++) {
             // 采样点
             int sample_y = base_y + dy;
             // 边界限制(等效于边缘扩展)
             sample_y = clip(sample_y, 0, in_h - 1);
-            // 计算实际距离
-            float dis_y = src_y_float - sample_y;
+            // 相对于核中心的一维垂直距离
+            float dis_y = dy - frac_y;
             // 计算权重
             float weight = core(dis_y, core_top, core_bottom);
             // 存入LUT
@@ -341,6 +355,7 @@ int main_generic_custom_scale_lut(args_t *args, float scale_x, float scale_y,
         // 获取基准整数坐标
         int base_x = floorf(src_x_float);
         int base_y = floorf(src_y_float);
+
         // 开始
         for(int c = 0; c < 4; c++) {
             // 开始卷积
@@ -351,15 +366,12 @@ int main_generic_custom_scale_lut(args_t *args, float scale_x, float scale_y,
                 int sample_x = base_x + dx;
                 // 边界限制(等效于边缘扩展)
                 sample_x = clip(sample_x, 0, in_w - 1);
-                // 计算实际距离
-                float dis_x = src_x_float - sample_x;
-                for(int dy = core_left, dyi = 0; dy <= core_right; dy++, dyi++) {
+
+                for(int dy = core_top, dyi = 0; dy <= core_bottom; dy++, dyi++) {
                     // 采样点
                     int sample_y = base_y + dy;
                     // 边界限制(等效于边缘扩展)
                     sample_y = clip(sample_y, 0, in_h - 1);
-                    // 计算实际距离
-                    float dis_y = src_y_float - sample_y;
 
                     // 计算权重
                     float weight = args->lut_x_buffer[x * core_width + dxi] * args->lut_y_buffer[y * core_height + dyi];

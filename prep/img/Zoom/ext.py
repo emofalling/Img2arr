@@ -21,9 +21,9 @@ class UI(abcExt.UI):
     def ui_init(self, widget: QWidget, ext: CDLL, save: dict | None):
         self_ref = weakref.ref(self)
         self.ext = ext
-        # SHARED (atomic_)size_t* create_atomic_size_t(size_t v)
-        self.ext.create_atomic_size_t.argtypes = [c_size_t]
-        self.ext.create_atomic_size_t.restype = POINTER(c_size_t)
+        # SHARED atomic_size_t* atomic_init_size_t(atomic_size_t* p, size_t v)
+        self.ext.atomic_init_size_t.argtypes = [POINTER(c_size_t), c_size_t]
+        self.ext.atomic_init_size_t.restype = POINTER(c_size_t)
         # 创建布局
         layout = QVBoxLayout(widget)
         layout.setContentsMargins(10, 10, 10, 10)
@@ -102,9 +102,9 @@ class UI(abcExt.UI):
         self.core_radius.valueChanged.connect(lambda _: self.Update())
 
         # LUT优化多选框
-        self.lut_optimize = QCheckBox("LUT优化")
+        self.lut_optimize = QCheckBox("LUT加速")
         self.lut_optimize.setChecked(True)
-        self.lut_optimize.setToolTip("以空间换时间，能大幅提升处理性能\n不过嘛...需要占用一丢丢内存")
+        self.lut_optimize.setToolTip("以空间换时间，在效果不变的前提下，大幅提升处理速度\n需要占用额外的一丢丢内存")
         layout.addWidget(self.lut_optimize)
         self.lut_optimize.stateChanged.connect(lambda _: self.Update())
         
@@ -152,10 +152,14 @@ class UI(abcExt.UI):
         # arr shape: (H, W, C)
         core_left, core_right = -self.core_radius.value(), self.core_radius.value()
         core_top, core_bottom = -self.core_radius.value(), self.core_radius.value()
+        # normalize
+        # core_left += 1
+        # core_top += 1
         out_w = self.spin_outx.value()
         out_h = self.spin_outy.value()
-        # 初始化原子变量锁
-        atm = self.ext.create_atomic_size_t(threads)
+        # 初始化原子变量
+        atm = POINTER(c_size_t)(c_size_t(0))
+        self.ext.atomic_init_size_t(atm, threads)
 
         # 不能直接lut_x_buffer lut_y_buffer！不然这些最终会因局部变量会被销毁。
         if self.lut_optimize.isChecked():

@@ -11,7 +11,7 @@ from PySide6.QtWidgets import (
     QDialogButtonBox, QStyle, 
     QGraphicsView, QGraphicsScene, 
     QGraphicsPixmapItem, QGraphicsRectItem,
-    QMessageBox, QFileDialog
+    QMessageBox, QFileDialog, QInputDialog
 )
 
 from PySide6.QtGui import (QCloseEvent, 
@@ -259,14 +259,18 @@ class WinMain(QObject):
 
         # 标签页右键菜单
         def tabwdg_contextMenuEvent(event: QContextMenuEvent):
+            # 获取右键的标签页索引
+            index = self.tabwdg.tabBar().tabAt(event.pos())
             # 获取当前标签页
-            current_tab = self.tabwdg.currentWidget()
+            current_tab = self.tabwdg.widget(index) if index != -1 else None
             # 如果当前标签页存在
             if current_tab:
                 # 创建菜单
                 menu = QMenu(self.tabwdg)
                 # 添加菜单项
-                menu.addAction("关闭", lambda: self.closeTab(self.tabwdg.currentIndex()))
+                menu.addAction("重命名", lambda: self.renameTab(index))
+                menu.addSeparator()
+                menu.addAction("关闭", lambda: self.closeTab(index))
                 menu.addAction("关闭所有", lambda: self.closeAllTabs())
                 # 显示菜单
                 menu.exec(event.globalPos())
@@ -469,13 +473,36 @@ class WinMain(QObject):
             if GetSet("directlyCloseWelcome"):
                 return True
             else:
-                result, check = CustomUI.MsgBoxQuesion_WithCheckButton(parent.win, "确认关闭", "真的要关闭欢迎页吗？", "不再提示（可从设置恢复）")
+                # 获取自身标签页名称
+                title = parent.tabwdg.tabText(parent.tabwdg.indexOf(self))
+                result, check = CustomUI.MsgBoxQuesion_WithCheckButton(parent.win, "确认关闭", f"真的要关闭{title}页吗？", "不再提示（可从设置恢复）")
                 if result == QMessageBox.StandardButton.Yes and check:
                     SetSet("directlyCloseWelcome", True)
                 return result == QMessageBox.StandardButton.Yes
     def welcome(self):
         """欢迎"""
         self.tabwdg.addTab(self.welcome_page, "欢迎")
+    
+    def renameTab(self, index: int):
+        cur_text = self.tabwdg.tabText(index)
+        # 输入对话框
+        while True:
+            text, ok = QInputDialog.getText(self.win, "重命名", "请输入新的标签名：", text=cur_text)
+            if not ok: return
+            pass_empty = GetSet("directlyRenameTabToEmpty")
+            if text == "" and not pass_empty:
+                sel, check = CustomUI.MsgBoxQuesion_WithCheckButton(
+                    self.win,
+                    "重命名",
+                    "真的要将标签名改为空吗？",
+                    "不再提示（可从设置恢复）",
+                )
+                if sel == QMessageBox.StandardButton.Yes:
+                    if check: SetSet("directlyRenameTabToEmpty", True)
+                    break
+            else:
+                break
+        self.tabwdg.setTabText(index, text)
     
     def RemoveTab(self, index: int):
         # 获取index所对widget
@@ -1743,17 +1770,21 @@ class PreProcessor(QObject):
 
         self_ref = weakref.ref(self)
         # 1. 水平忽略内部组件拉伸，同时尽可能拉伸；垂直最小化
-        ui.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.MinimumExpanding)
+        ui.setSizePolicy(
+            QSizePolicy.Policy.Ignored, 
+            # QSizePolicy.Policy.MinimumExpanding
+            QSizePolicy.Policy.Minimum
+        )
         # 自身布局
         layout = QVBoxLayout()
         layout.setContentsMargins(0, 0, 0, 0)
         ui.setLayout(layout)
         # 上层QWidget
         wdg_upper = QWidget()
-        # 占满宽度
+        # 占满宽度，最小高度
         wdg_upper.setSizePolicy(    
             QSizePolicy.Policy.Expanding, 
-            QSizePolicy.Policy.Preferred
+            QSizePolicy.Policy.Minimum
         )
         # 添加到布局
         layout.addWidget(wdg_upper)
@@ -1831,7 +1862,10 @@ class PreProcessor(QObject):
         scroll.setMinimumSize(0, 0)
         # scroll.setStyleSheet("background-color: blue;") #调试用
         # 2. 水平忽略内部组件拉伸，同时尽可能拉伸；垂直最小
-        scroll.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Minimum)
+        scroll.setSizePolicy(
+            QSizePolicy.Policy.Ignored, 
+            QSizePolicy.Policy.Minimum
+        )
         layout.addWidget(scroll)
         # 设置
         scroll.setWidgetResizable(True)
@@ -1860,7 +1894,10 @@ class PreProcessor(QObject):
         uwidg = QWidget()
         uwidg.setMinimumSize(0, 0)
         # 3. 水平拉伸，垂直自适应
-        uwidg.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        uwidg.setSizePolicy(
+            QSizePolicy.Policy.Expanding, 
+            QSizePolicy.Policy.Minimum
+        )
             
         scroll.setWidget(uwidg)
 

@@ -3,7 +3,7 @@ from PySide6.QtWidgets import (QApplication, QWidget, QMainWindow,
                                QHBoxLayout, QVBoxLayout,
                                QLabel, QPushButton, QCheckBox, 
                                QGraphicsView, QGraphicsScene, QGraphicsPixmapItem,
-                               QMessageBox, 
+                               QMessageBox, QFileDialog,
                                QSizePolicy, 
 )
 from PySide6.QtCore import (Qt, QObject, QRectF
@@ -25,6 +25,8 @@ from numpy.typing import NDArray
 import logging
 
 logger = logging.getLogger(os.path.basename(__file__))
+
+from PIL import Image
 
 # img.shape: (h, w, c)
 IMG_SHAPE_H = 0
@@ -195,6 +197,15 @@ class CustomUI:
             action = menu.addAction("复制图片")
             # 绑定菜单项的点击事件
             action.triggered.connect(lambda: (self := self_ref()) and self.copy_img( ))
+            action = menu.addAction("保存图片")
+            def save_img():
+                self = self_ref()
+                if self is None: return
+                # 获取保存的文件名
+                filename, _ = QFileDialog.getSaveFileName(self.gpview, "保存图片", "", "PNG Files (*.png);;JPEG Files (*.jpg *.jpeg);;All Files (*)")
+                Image.fromqimage(self.qimage).save(filename) # type: ignore
+                QMessageBox.information(self.gpview, "保存成功", f"图片已保存到 {filename}")
+            action.triggered.connect(save_img)
             # 显示菜单
             menu.exec(e.globalPos())
         # 或者gpview上Ctrl+C复制图片

@@ -157,5 +157,14 @@ cython_debug/
 # on Custom compiler
 .hash
 
+# IDA
+*.i32
+*.i64
+*.id0
+*.id1
+*.id2
+*.nam
+*.til
+
 # setting.json
 setting.json

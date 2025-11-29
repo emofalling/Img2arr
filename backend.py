@@ -36,7 +36,7 @@ import ctypes
 import sys, os
 from types import ModuleType
 import typing
-from typing import Callable, Any, NewType, Sequence, Optional
+from typing import Callable, Any, NewType, Sequence, Optional, TypeAlias
 
 import importlib.util
 import platform
@@ -106,27 +106,45 @@ PlProcCore.MultiCore_old.argtypes = [
     ctypes.c_char_p, ctypes.c_size_t, ctypes.c_void_p, ctypes.c_void_p, ctypes.POINTER(ctypes.c_int),
     ctypes.POINTER(ctypes.c_uint8), ctypes.POINTER(ctypes.c_uint8), ctypes.POINTER(ctypes.c_size_t)
 ]
-PlProcCore.MultiCore.restype = ctypes.c_int
+PlProcCore.MultiCore_old.restype = ctypes.c_int
+
+ThreadPoolCtxPtr: TypeAlias = ctypes.c_void_p
 """
-size_t InitThreadPool(size_t threadnum)
+ThreadPoolCtx* NewThreadPoolCtx()
 """
-PlProcCore.InitThreadPool.argtypes = [ctypes.c_size_t]
+PlProcCore.NewThreadPoolCtx.argtypes = []
+PlProcCore.NewThreadPoolCtx.restype = ThreadPoolCtxPtr
+"""
+void DeleteThreadPoolCtx(ThreadPoolCtx* ctx)
+"""
+PlProcCore.DeleteThreadPoolCtx.argtypes = [ThreadPoolCtxPtr]
+PlProcCore.DeleteThreadPoolCtx.restype = None
+"""
+size_t InitThreadPool(ThreadPoolCtx* ctx, size_t threadnum)
+"""
+PlProcCore.InitThreadPool.argtypes = [ThreadPoolCtxPtr, ctypes.c_size_t]
 PlProcCore.InitThreadPool.restype = ctypes.c_size_t
 """
-int MultiCore(char* caller, void* func, void* args, int *ret,
+size_t ThreadPoolGetThreads(ThreadPoolCtx* ctx)
+"""
+PlProcCore.ThreadPoolGetThreads.argtypes = [ThreadPoolCtxPtr]
+PlProcCore.ThreadPoolGetThreads.restype = ctypes.c_size_t
+"""
+int MultiCore(ThreadPoolCtx* ctx,
+    char* caller, void* func, void* args, int *ret,
     uint8_t* in_buffer, uint8_t* out_buffer,
     size_t in_shape[])
 """
-PlProcCore.MultiCore.argtypes = [
+PlProcCore.MultiCore.argtypes = [ThreadPoolCtxPtr,
     ctypes.c_char_p, ctypes.c_void_p, ctypes.c_void_p, ctypes.POINTER(ctypes.c_int),
     ctypes.POINTER(ctypes.c_uint8), ctypes.POINTER(ctypes.c_uint8), ctypes.POINTER(ctypes.c_size_t)
 ]
 PlProcCore.MultiCore.restype = ctypes.c_int
 """
-void Exit()
+void DeleteThreadPoolCtx(ThreadPoolCtx* ctx)
 """
-PlProcCore.Exit.argtypes = []
-PlProcCore.Exit.restype = None
+PlProcCore.DeleteThreadPoolCtx.argtypes = [ThreadPoolCtxPtr]
+PlProcCore.DeleteThreadPoolCtx.restype = None
 
 def CDLLreadsig(ext: ctypes.CDLL) -> str: # 读取动态链接库签名
     return ctypes.string_at(ext.img2arr_ext_sign).decode('utf-8', 'ignore')
@@ -365,6 +383,64 @@ def _load_exts_ctlext(file: str, cdll: ctypes.CDLL) -> ModuleType:
 
 import time
 
+class PlProc:
+    """最近一次调用`set_threads()`时指定的线程数。"""
+    threads: int = 0
+    f1_is_running: bool = False
+    def __init__(self, threads: Optional[int] = None):
+        self.ctx: ThreadPoolCtxPtr = PlProcCore.NewThreadPoolCtx()
+        if threads is None:
+            logger.warning("没有指定线程数，将不初始化线程池，这会导致调用`f1()`出现异常。之后需手动调用`set_threads()`初始化线程池。")
+            return
+        self.set_threads(threads)
+    def set_threads(self, threads: int) -> int:
+        """设定线程数。也用于重新初始化线程池(会等待所有任务完成)。  
+        返回值：实际线程数。有概率因系统原因会小于指定线程数`threads`"""
+        real_threads = PlProcCore.InitThreadPool(self.ctx, threads)
+        self.threads = threads
+        return real_threads
+    def get_threads(self) -> int:
+        """获取真实线程数。有概率因系统原因会小于最近调用`set_threads()`时指定的线程数`threads`"""
+        return PlProcCore.ThreadPoolGetThreads(self.ctx)
+    
+    def f0(self, 
+           name: bytes, func_ptr: ExtensionPyABC.CPointerArgType,
+           args: ExtensionPyABC.CPointerArgType, ret_ptr: ExtensionPyABC.CPointerArgType,
+           inbuf_ptr: ctypes._Pointer, outbuf_ptr: ctypes._Pointer,
+           shape_ptr: ctypes._Pointer | ctypes.Array
+        ) -> int:
+        """单核运算。直接在本线程执行。"""
+        return PlProcCore.SingleCore(
+            name, func_ptr, args, ret_ptr, 
+            inbuf_ptr, outbuf_ptr, shape_ptr
+        )
+    def f1(self,
+           name: bytes, func_ptr: ExtensionPyABC.CPointerArgType,
+           args: ExtensionPyABC.CPointerArgType, ret_ptr: ExtensionPyABC.CPointerArgType,
+           inbuf_ptr: ctypes._Pointer, outbuf_ptr: ctypes._Pointer,
+           shape_ptr: ctypes._Pointer | ctypes.Array
+        ) -> int:
+        """
+        并行计算。该函数会等待直到所有线程完成。
+        如果在调用此函数时，线程池未初始化，会抛出异常。
+        如果在调用此函数时，其他任务仍在执行，可能会出现异常。
+        """
+        if self.f1_is_running:
+            logger.warning("线程池已经有正在运行的任务了。接下来可能会出现异常。")
+        self.f1_is_running = True
+        ret = PlProcCore.MultiCore(
+            self.ctx, 
+            name, func_ptr, args, ret_ptr, 
+            inbuf_ptr, outbuf_ptr, shape_ptr
+        )
+        self.f1_is_running = False
+        if ret == -114514: # 线程池线程数为0
+            raise RuntimeError("线程池未初始化，或线程数被设为0。请先调用`set_threads()`")
+        return ret
+
+    def __del__(self):
+        PlProcCore.DeleteThreadPoolCtx(self.ctx)
+
 
 threads = 0
 
@@ -376,7 +452,7 @@ def SetParallelThreads(thrs: int) -> int:
             thrs = 1
         else:
             thrs = thrs_
-    threads = PlProcCore.InitThreadPool(thrs)
+    threads = thrs
     return threads
 
 
@@ -414,7 +490,7 @@ class PIPENodeResult:
 class MidBuffer:
     def __init__(self, arr: NDArray):
         self.arr = arr
-        self.arrptr: ctypes._Pointer[ctypes.c_uint8]
+        self.arrptr: ctypes._Pointer
         self.readers: list[int] = []
         self.writers: list[int] = []
         self.update_ptr()
@@ -424,7 +500,7 @@ class MidBuffer:
         self.arr.resize(shape, refcheck=refcheck)
         self.update_ptr()
 
-def call_processor(name: str, dll: ctypes.CDLL, args: ExtensionPyABC.CPointerArgType, in_buf: MidBuffer, out_buf: MidBuffer | None, is_code_view: bool = False):
+def call_processor(plproc: PlProc, name: str, dll: ctypes.CDLL, args: ExtensionPyABC.CPointerArgType, in_buf: MidBuffer, out_buf: MidBuffer | None, is_code_view: bool = False):
     """调用处理"""
     # 获取指针
     inbuf_ptr = in_buf.arrptr
@@ -459,8 +535,12 @@ def call_processor(name: str, dll: ctypes.CDLL, args: ExtensionPyABC.CPointerArg
         # 准备返回值列表，默认值全是0
         ret_list = numpy.zeros(threads, dtype=numpy.intc)
         # 多核
-        ret = PlProcCore.MultiCore(bytes(name, "utf-8"), f1_func, args, ret_list.ctypes.data_as(ctypes.POINTER(ctypes.c_int)), 
-                                   inbuf_ptr, outbuf_ptr, in_shape_ct)
+        # ret = PlProcCore.MultiCore(bytes(name, "utf-8"), f1_func, args, ret_list.ctypes.data_as(ctypes.POINTER(ctypes.c_int)), 
+        #                            inbuf_ptr, outbuf_ptr, in_shape_ct)
+        ret = plproc.f1(
+            bytes(name, "utf-8"), f1_func, args, ret_list.ctypes.data_as(ctypes.POINTER(ctypes.c_int)), 
+            inbuf_ptr, outbuf_ptr, in_shape_ct
+        )
         result.proc_mode = EXT_PATH_MULTICORE
         result.results = ret_list
         result.ret = ret
@@ -468,8 +548,12 @@ def call_processor(name: str, dll: ctypes.CDLL, args: ExtensionPyABC.CPointerArg
     elif hasattr(dll, f0_name):
         logger.debug("Single Core")
         ret_main = ctypes.c_int(0)
-        ret = PlProcCore.SingleCore(bytes(name, "utf-8"), f0_func, args, ctypes.byref(ret_main), 
-                                    inbuf_ptr, outbuf_ptr, in_shape_ct)
+        # ret = PlProcCore.SingleCore(bytes(name, "utf-8"), f0_func, args, ctypes.byref(ret_main), 
+        #                             inbuf_ptr, outbuf_ptr, in_shape_ct)
+        ret = plproc.f0(
+            bytes(name, "utf-8"), f0_func, args, ctypes.byref(ret_main), 
+            inbuf_ptr, outbuf_ptr, in_shape_ct
+        )
         result.proc_mode = EXT_PATH_SINGLECORE
         result.results = ret_main.value
         result.ret = ret
@@ -480,6 +564,9 @@ def call_processor(name: str, dll: ctypes.CDLL, args: ExtensionPyABC.CPointerArg
 
 class Img2arrPIPE:
     def __init__(self, imgf: str, extdc: ExtList):
+        # 计算单元
+        self.plproc = PlProc(threads)
+        print("Real threads:", self.plproc.get_threads())
         # 原图
         self.img = numpy.array(Image.open(imgf).convert("RGBA"), dtype=numpy.uint8)
         # reshape
@@ -502,7 +589,7 @@ class Img2arrPIPE:
         empty: 处理链是否为空。若为空，则不进行任何操作，并且将img复制到pre。  
         如果处理链为空，但empty=False，则不会把img复制到pre，画面不符合预期
         """
-        it = Pre_iter(self.extdc, self.img, self.img_pre_buf, self.pre, i)
+        it = Pre_iter(self.plproc, self.extdc, self.img, self.img_pre_buf, self.pre, i)
         if empty:
             # 检查pre尺寸是否需要更新
             if self.pre.shape != self.img.shape:
@@ -535,7 +622,7 @@ class Img2arrPIPE:
         logger.debug(f"此次编码预览输出尺寸: {out_shape}")
         logger.debug(f"{in_arr.shape} -> {self.code_view.shape}")
         # 调用编码器
-        result = call_processor(name, dll, args, MidBuffer(in_arr), MidBuffer(self.code_view), is_code_view=True)
+        result = call_processor(self.plproc, name, dll, args, MidBuffer(in_arr), MidBuffer(self.code_view), is_code_view=True)
         # 返回结果
         return result, view_updated
     def Code(self, name: str, args: ExtensionPyABC.CPointerArgType, argslen: int) -> PIPENodeResult:
@@ -556,7 +643,7 @@ class Img2arrPIPE:
         if self.code_out.shape[0] != out_size:
             self.code_out.resize((out_size,), refcheck=False)
         # 调用编码器
-        result = call_processor(name, dll, args, MidBuffer(self.pre), MidBuffer(self.code_out))
+        result = call_processor(self.plproc, name, dll, args, MidBuffer(self.pre), MidBuffer(self.code_out))
         # 返回结果
         return result
     def Out(self, name: str, args: ExtensionPyABC.CPointerArgType, argslen: int) -> PIPENodeResult:
@@ -578,7 +665,7 @@ class Img2arrPIPE:
         if self.out.shape[0] != out_size:
             self.out.resize((out_size,), refcheck=False)
         # 调用输出器
-        result = call_processor(name, dll, args, MidBuffer(self.code_out), MidBuffer(self.out))
+        result = call_processor(self.plproc, name, dll, args, MidBuffer(self.code_out), MidBuffer(self.out))
         # 返回结果
         return result
     def resetPrePIPE(self):
@@ -589,8 +676,9 @@ class Img2arrPIPE:
 
         
 class Pre_iter:
-    def __init__(self, extdc: ExtList, img: NDArray[numpy.uint8], img_pre_buf: list[MidBuffer], pre: NDArray[numpy.uint8], i: int):
+    def __init__(self, plproc: PlProc, extdc: ExtList, img: NDArray[numpy.uint8], img_pre_buf: list[MidBuffer], pre: NDArray[numpy.uint8], i: int):
         # print("----")
+        self.plproc = plproc
         self.extdc = extdc
         self.img = MidBuffer(img)
         self.pre = MidBuffer(pre)
@@ -798,7 +886,7 @@ class Pre_iter:
         # 调用预处理
         if name != "": # 默认逻辑
             if dll is not None:
-                ret = call_processor(name, dll, args, in_buf, out_buf)
+                ret = call_processor(self.plproc, name, dll, args, in_buf, out_buf)
             else:
                 logger.error("预处理时，name不为空，但dll为None")
         else: # 空扩展，直接复制
@@ -821,4 +909,4 @@ class Pre_iter:
         
 def Close():
     """退出清理"""
-    PlProcCore.Exit()
+    pass
