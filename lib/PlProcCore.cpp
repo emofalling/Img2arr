@@ -98,7 +98,12 @@ private:
         while(this->ThreadPool_Running){
             // 若TaskQueue为空，则等待
             std::unique_lock<std::mutex> lock(this->TaskMutex);
-            TaskQueueCV.wait(lock, [this]{return !this->TaskQueue.empty() || !this->ThreadPool_Running;});
+            // 如果队列为空且线程池仍在运行，才等待
+            if(this->TaskQueue.empty() && this->ThreadPool_Running){
+                TaskQueueCV.wait(lock, [this]{
+                    return !this->TaskQueue.empty() || !this->ThreadPool_Running;
+                });
+            }
             if(!this->ThreadPool_Running){
                 // 该休息了
                 // 自动解锁
@@ -157,21 +162,26 @@ public:
         }
         return real_threadnum;
     }
+    // 当tasks=0时，表示tasks=threads
     int MultiCore(
         char* caller, void* func, void* args, int *ret,
         uint8_t* in_buffer, uint8_t* out_buffer,
-        size_t in_shape[]
+        size_t in_shape[],
+        size_t tasks
     )
     {   
+        if(tasks == 0){
+            tasks = this->ThreadPool.size();
+        }
         // 添加至队列
         size_t threads = this->ThreadPool.size();
         if (threads == 0){
             fprintf(stderr, "ThreadPoolCtx Error: On caller %s, No thread pool initialized. Please call InitThreadPool() first.\n", caller);
             return -114514;
         }
-        for(size_t i = 0; i < threads; i++){
+        for(size_t i = 0; i < tasks; i++){
             TaskQueue.push({
-                .threads = threads,
+                .threads = tasks,
                 .idx = i,
                 .func = (MultiCoreFunc)func,
                 .args = args,
@@ -180,11 +190,11 @@ public:
                 .out_buffer = out_buffer,
                 .ret = ret
             });
-            // printf("Run %s in thread %zu, total %zu\n", caller, i, threads);
+            // printf("Run %s in thread %zu, total %zu\n", caller, i, tasks);
         }
         // 唤醒并等待全部任务完成
         this->TaskQueueCV.notify_all();
-        for(size_t i = 0; i < threads; i++){
+        for(size_t i = 0; i < tasks; i++){
             this->TaskQueueSemaphore.acquire();
         }
         return 0;
@@ -216,9 +226,11 @@ externc SHARED size_t ThreadPoolGetThreads(ThreadPoolCtx* ctx){
 externc SHARED int MultiCore(ThreadPoolCtx* ctx,
     char* caller, void* func, void* args, int *ret,
     uint8_t* in_buffer, uint8_t* out_buffer,
-    size_t in_shape[])
+    size_t in_shape[],
+    size_t tasks
+)
 {
-    ctx->MultiCore(caller, func, args, ret, in_buffer, out_buffer, in_shape);
+    ctx->MultiCore(caller, func, args, ret, in_buffer, out_buffer, in_shape, tasks);
     return 0;
 }
 

@@ -31,6 +31,9 @@ import logging
 
 from PIL import Image # 以后会转而使用动态链接库而非PIL
 
+# 设置Image不限大小加载和保存图片
+Image.MAX_IMAGE_PIXELS = None
+
 import ctypes
 
 import sys, os
@@ -133,11 +136,14 @@ PlProcCore.ThreadPoolGetThreads.restype = ctypes.c_size_t
 int MultiCore(ThreadPoolCtx* ctx,
     char* caller, void* func, void* args, int *ret,
     uint8_t* in_buffer, uint8_t* out_buffer,
-    size_t in_shape[])
+    size_t in_shape[],
+    size_t tasks
+)
 """
 PlProcCore.MultiCore.argtypes = [ThreadPoolCtxPtr,
     ctypes.c_char_p, ctypes.c_void_p, ctypes.c_void_p, ctypes.POINTER(ctypes.c_int),
-    ctypes.POINTER(ctypes.c_uint8), ctypes.POINTER(ctypes.c_uint8), ctypes.POINTER(ctypes.c_size_t)
+    ctypes.POINTER(ctypes.c_uint8), ctypes.POINTER(ctypes.c_uint8), ctypes.POINTER(ctypes.c_size_t),
+    ctypes.c_size_t
 ]
 PlProcCore.MultiCore.restype = ctypes.c_int
 """
@@ -418,12 +424,14 @@ class PlProc:
            name: bytes, func_ptr: ExtensionPyABC.CPointerArgType,
            args: ExtensionPyABC.CPointerArgType, ret_ptr: ExtensionPyABC.CPointerArgType,
            inbuf_ptr: ctypes._Pointer, outbuf_ptr: ctypes._Pointer,
-           shape_ptr: ctypes._Pointer | ctypes.Array
+           shape_ptr: ctypes._Pointer | ctypes.Array,
+           tasks: int
         ) -> int:
         """
-        并行计算。该函数会等待直到所有线程完成。
-        如果在调用此函数时，线程池未初始化，会抛出异常。
-        如果在调用此函数时，其他任务仍在执行，可能会出现异常。
+        并行计算。该函数会等待直到所有线程完成。  
+        如果在调用此函数时，线程池未初始化，会抛出异常。  
+        如果在调用此函数时，其他任务仍在执行，可能会出现异常。  
+        tasks: 任务数。如果为0，会使用线程池中的线程数。一般大于等于线程数。
         """
         if self.f1_is_running:
             logger.warning("线程池已经有正在运行的任务了。接下来可能会出现异常。")
@@ -431,7 +439,8 @@ class PlProc:
         ret = PlProcCore.MultiCore(
             self.ctx, 
             name, func_ptr, args, ret_ptr, 
-            inbuf_ptr, outbuf_ptr, shape_ptr
+            inbuf_ptr, outbuf_ptr, shape_ptr,
+            tasks
         )
         self.f1_is_running = False
         if ret == -114514: # 线程池线程数为0
@@ -500,7 +509,7 @@ class MidBuffer:
         self.arr.resize(shape, refcheck=refcheck)
         self.update_ptr()
 
-def call_processor(plproc: PlProc, name: str, dll: ctypes.CDLL, args: ExtensionPyABC.CPointerArgType, in_buf: MidBuffer, out_buf: MidBuffer | None, is_code_view: bool = False):
+def call_processor(plproc: PlProc, tasks: int, name: str, dll: ctypes.CDLL, args: ExtensionPyABC.CPointerArgType, in_buf: MidBuffer, out_buf: MidBuffer | None, is_code_view: bool = False):
     """调用处理"""
     # 获取指针
     inbuf_ptr = in_buf.arrptr
@@ -533,13 +542,14 @@ def call_processor(plproc: PlProc, name: str, dll: ctypes.CDLL, args: ExtensionP
     if hasattr(dll, f1_name):
         logger.debug("Multi Core")
         # 准备返回值列表，默认值全是0
-        ret_list = numpy.zeros(threads, dtype=numpy.intc)
+        ret_list = numpy.zeros(tasks if tasks > 0 else plproc.get_threads(), dtype=numpy.intc)
         # 多核
         # ret = PlProcCore.MultiCore(bytes(name, "utf-8"), f1_func, args, ret_list.ctypes.data_as(ctypes.POINTER(ctypes.c_int)), 
         #                            inbuf_ptr, outbuf_ptr, in_shape_ct)
         ret = plproc.f1(
             bytes(name, "utf-8"), f1_func, args, ret_list.ctypes.data_as(ctypes.POINTER(ctypes.c_int)), 
-            inbuf_ptr, outbuf_ptr, in_shape_ct
+            inbuf_ptr, outbuf_ptr, in_shape_ct,
+            tasks # 使用线程数
         )
         result.proc_mode = EXT_PATH_MULTICORE
         result.results = ret_list
@@ -566,9 +576,10 @@ class Img2arrPIPE:
     def __init__(self, imgf: str, extdc: ExtList):
         # 计算单元
         self.plproc = PlProc(threads)
-        print("Real threads:", self.plproc.get_threads())
         # 原图
         self.img = numpy.array(Image.open(imgf).convert("RGBA"), dtype=numpy.uint8)
+        # 设置self.img只读
+        self.img.flags.writeable = False
         # reshape
         # self.img.shape = (self.img.shape[0], self.img.shape[1], self.img.shape[2])
         self.extdc = extdc
@@ -583,13 +594,17 @@ class Img2arrPIPE:
         # 输出
         self.out = numpy.empty((0,), dtype=numpy.uint8)
 
+        # 并发任务数。0表示使用线程数。
+        self.tasks = 0 # 不建议动。会导致某些扩展无法正常工作。
+        
+
     def Pre(self, i: int, empty: bool = False):
         """预处理。返回一个一次性迭代器  
         i: 预处理链索引。i=0，从头开始（但仍会保存用过且必要的缓冲区）；i!=0时，会启用增量刷新  
         empty: 处理链是否为空。若为空，则不进行任何操作，并且将img复制到pre。  
         如果处理链为空，但empty=False，则不会把img复制到pre，画面不符合预期
         """
-        it = Pre_iter(self.plproc, self.extdc, self.img, self.img_pre_buf, self.pre, i)
+        it = Pre_iter(self.plproc, self.tasks, self.extdc, self.img, self.img_pre_buf, self.pre, i)
         if empty:
             # 检查pre尺寸是否需要更新
             if self.pre.shape != self.img.shape:
@@ -622,7 +637,7 @@ class Img2arrPIPE:
         logger.debug(f"此次编码预览输出尺寸: {out_shape}")
         logger.debug(f"{in_arr.shape} -> {self.code_view.shape}")
         # 调用编码器
-        result = call_processor(self.plproc, name, dll, args, MidBuffer(in_arr), MidBuffer(self.code_view), is_code_view=True)
+        result = call_processor(self.plproc, self.tasks, name, dll, args, MidBuffer(in_arr), MidBuffer(self.code_view), is_code_view=True)
         # 返回结果
         return result, view_updated
     def Code(self, name: str, args: ExtensionPyABC.CPointerArgType, argslen: int) -> PIPENodeResult:
@@ -643,7 +658,7 @@ class Img2arrPIPE:
         if self.code_out.shape[0] != out_size:
             self.code_out.resize((out_size,), refcheck=False)
         # 调用编码器
-        result = call_processor(self.plproc, name, dll, args, MidBuffer(self.pre), MidBuffer(self.code_out))
+        result = call_processor(self.plproc, self.tasks, name, dll, args, MidBuffer(self.pre), MidBuffer(self.code_out))
         # 返回结果
         return result
     def Out(self, name: str, args: ExtensionPyABC.CPointerArgType, argslen: int) -> PIPENodeResult:
@@ -665,7 +680,7 @@ class Img2arrPIPE:
         if self.out.shape[0] != out_size:
             self.out.resize((out_size,), refcheck=False)
         # 调用输出器
-        result = call_processor(self.plproc, name, dll, args, MidBuffer(self.code_out), MidBuffer(self.out))
+        result = call_processor(self.plproc, self.tasks, name, dll, args, MidBuffer(self.code_out), MidBuffer(self.out))
         # 返回结果
         return result
     def resetPrePIPE(self):
@@ -676,10 +691,11 @@ class Img2arrPIPE:
 
         
 class Pre_iter:
-    def __init__(self, plproc: PlProc, extdc: ExtList, img: NDArray[numpy.uint8], img_pre_buf: list[MidBuffer], pre: NDArray[numpy.uint8], i: int):
+    def __init__(self, plproc: PlProc, tasks: int, extdc: ExtList, img: NDArray[numpy.uint8], img_pre_buf: list[MidBuffer], pre: NDArray[numpy.uint8], i: int):
         # print("----")
         self.plproc = plproc
         self.extdc = extdc
+        self.tasks = tasks
         self.img = MidBuffer(img)
         self.pre = MidBuffer(pre)
 
@@ -886,7 +902,7 @@ class Pre_iter:
         # 调用预处理
         if name != "": # 默认逻辑
             if dll is not None:
-                ret = call_processor(self.plproc, name, dll, args, in_buf, out_buf)
+                ret = call_processor(self.plproc, self.tasks, name, dll, args, in_buf, out_buf)
             else:
                 logger.error("预处理时，name不为空，但dll为None")
         else: # 空扩展，直接复制

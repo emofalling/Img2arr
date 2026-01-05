@@ -75,7 +75,7 @@ class UI(abcExt.UI):
         self.method_list = [
             "最近邻插值",
             "双线性插值",
-            "双三次插值",
+            "双三次插值(4×4核)",
             "Lanczos插值"
         ]
         self.method.addItems(self.method_list)
@@ -107,13 +107,15 @@ class UI(abcExt.UI):
         self.lut_optimize.setToolTip("以空间换时间，在效果不变的前提下，大幅提升处理速度\n需要占用额外的一丢丢内存")
         layout.addWidget(self.lut_optimize)
         self.lut_optimize.stateChanged.connect(lambda _: self.Update())
+
+        self.Update(False)
         
     
     # 更新
-    def Update(self):
-        has_core = self.method.currentIndex() not in (0, 1)
+    def Update(self, notify=True):
+        has_core = self.method.currentIndex() not in (0, 1, 2)
         self.core_widget.setVisible(has_core)
-        self.img2arr_notify_update()
+        if notify: self.img2arr_notify_update()
     
     class args_t(Structure):
         # [pack]struct{
@@ -150,8 +152,15 @@ class UI(abcExt.UI):
         _pack_ = 1
     def update(self, arr, threads):
         # arr shape: (H, W, C)
-        core_left, core_right = -self.core_radius.value(), self.core_radius.value()
-        core_top, core_bottom = -self.core_radius.value(), self.core_radius.value()
+        method_idx = self.method.currentIndex()
+        if method_idx in (0, 1):
+            core_left = core_right = core_top = core_bottom = 0
+        elif method_idx == 2:
+            core_left = core_top = -2
+            core_right = core_bottom = 2
+        else:
+            core_left = core_top = -self.core_radius.value()
+            core_right = core_bottom = self.core_radius.value()
         # normalize
         # core_left += 1
         # core_top += 1
@@ -171,7 +180,7 @@ class UI(abcExt.UI):
         args = self.args_t(
             out_w / arr.shape[1],
             out_h / arr.shape[0],
-            self.method.currentIndex(),
+            method_idx,
             core_left, core_right, core_top, core_bottom,
             self.lut_optimize.isChecked(),
             lut_x_buffer,
@@ -181,7 +190,7 @@ class UI(abcExt.UI):
 
         # 刷新提示文本
         self.img2arr_UpdateTiptext(
-            f"({arr.shape[1]}, {arr.shape[0]}) → ({out_w}, {out_h}), {self.method_list[self.method.currentIndex()]}"
+            f"({arr.shape[1]}, {arr.shape[0]}) → ({out_w}, {out_h}), {self.method_list[method_idx]}"
         )
 
         return (byref(args), sizeof(args))
@@ -190,6 +199,6 @@ class UI(abcExt.UI):
         
 
     def __del__(self):
-        print("缩放 释放")
+        print("缩放 被__del__")
     def ui_save(self):
         pass

@@ -1,7 +1,8 @@
 from PySide6.QtWidgets import (QApplication, QWidget, QMainWindow, 
                                QFrame, QMenu, 
-                               QHBoxLayout, QVBoxLayout,
-                               QLabel, QPushButton, QCheckBox, 
+                               QScrollBar, 
+                               QHBoxLayout, QVBoxLayout, QGridLayout, 
+                               QLabel, QPushButton, QCheckBox, QScrollArea, 
                                QGraphicsView, QGraphicsScene, QGraphicsPixmapItem,
                                QMessageBox, QFileDialog,
                                QSizePolicy, 
@@ -26,7 +27,11 @@ import logging
 
 logger = logging.getLogger(os.path.basename(__file__))
 
+from lib.DebugQObjects import QDebugWidget
+
 from PIL import Image
+# 设置Image不限大小加载和保存图片
+Image.MAX_IMAGE_PIXELS = None
 
 # img.shape: (h, w, c)
 IMG_SHAPE_H = 0
@@ -74,10 +79,80 @@ class CustomUI:
         msg_box.setStandardButtons(buttons)
         return msg_box.exec()
     @staticmethod
-    class GenerelPicViewer(QWidget):
+    class FakeQScrollArea(QFrame):
+        """[调试]假的QScrollArea，其实是QFrame。它可以用来替代QScrollArea进行调试"""
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            # 默认有1线框
+            self.setFrameShape(QFrame.Shape.StyledPanel)
+            # 主布局
+            self.main_layout = QVBoxLayout()
+            self.main_layout.setContentsMargins(0, 0, 0, 0)
+            # 设置布局
+            self.setLayout(self.main_layout)
+        def setWidget(self, widget: QWidget):
+            """设置widget"""
+            # 删除布局的所有子项
+            for i in range(self.main_layout.count()):
+                item = self.main_layout.itemAt(i)
+                if item is not None:
+                    w = item.widget()
+                    if w is not None:
+                        w.setParent(None)
+            # 添加新的widget
+            self.main_layout.addWidget(widget)
+        def setWidgetResizable(self, resizable: bool):
+            """设置widget是否可调整大小"""
+            pass
+        def setHorizontalScrollBarPolicy(self, policy: Qt.ScrollBarPolicy):
+            """设置水平滚动条策略"""
+            pass
+        def setVerticalScrollBarPolicy(self, policy: Qt.ScrollBarPolicy):
+            """设置垂直滚动条策略"""
+            pass
+    @staticmethod
+    class SeniorQScrollArea(QFrame):
+        """高级QScrollArea，可以调整可变的边"""
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            # 默认有1线框
+            self.setFrameShape(QFrame.Shape.StyledPanel)
+            # 主QWidget，用于包含内容
+            self.main_widget = QWidget()
+            # 两个QScrollBar
+            self.right_tab_bar = QScrollBar(Qt.Orientation.Vertical)
+            self.bottom_tab_bar = QScrollBar(Qt.Orientation.Horizontal)
+            # 布局
+            self.main_layout = QGridLayout()
+            self.main_layout.setContentsMargins(0, 0, 0, 0)
+            # (0, 0): main_widget
+            self.main_layout.addWidget(self.main_widget, 0, 0)
+            # (0, 1): right_tab_bar
+            self.main_layout.addWidget(self.right_tab_bar, 0, 1)
+            # (1, 0): bottom_tab_bar
+            self.main_layout.addWidget(self.bottom_tab_bar, 1, 0)
+            # 设置布局
+            self.setLayout(self.main_layout)
+        def setWidget(self, widget: QWidget):
+            """设置widget"""
+            # 设置widget的父级
+            widget.setParent(self.main_widget)
+        def setWidgetResizable(self, resizable: bool):
+            """设置widget是否可调整大小"""
+            pass
+        def setHorizontalScrollBarPolicy(self, policy: Qt.ScrollBarPolicy):
+            """设置水平滚动条策略"""
+            pass
+        def setVerticalScrollBarPolicy(self, policy: Qt.ScrollBarPolicy):
+            """设置垂直滚动条策略"""
+            pass
+
+    @staticmethod
+    class GenerelPicViewer(QDebugWidget):
         """一个通用的图片查看器。继承于QWidget"""
         def __init__(self, img: NDArray, prefix = ""):
             super().__init__()
+            self.setObjectName(f"GenerelPicViewer: {prefix}")
             self_ref = weakref.ref(self)
             self.prefix = prefix
             # self_ref = weakref.ref(self)
@@ -247,7 +322,7 @@ class CustomUI:
             clipboard = QApplication.clipboard()
             clipboard.setImage(self.qimage)
         def __del__(self):
-            logger.info(f"图片预览 {self.prefix} 删除")
+            logger.info(f"图片预览 {self.prefix} 被__del__")
 
 
 

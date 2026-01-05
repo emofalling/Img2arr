@@ -5,7 +5,8 @@ from PySide6.QtWidgets import (
     QWidget, QFrame, QScrollArea,
     QLabel, QPushButton, QCheckBox, QSlider,
     QListWidget, QLineEdit, QPlainTextEdit, QTextEdit, 
-    QHBoxLayout, QVBoxLayout, QSplitter,
+    QHBoxLayout, QVBoxLayout, QGridLayout, 
+    QSplitter,
     QTabWidget, QTabBar, QSizePolicy, 
     QMenu, QToolTip, QToolButton,
     QDialogButtonBox, QStyle, 
@@ -59,6 +60,8 @@ import numpy
 from numpy.typing import NDArray
 
 import backend  # 后端
+
+from lib.DebugQObjects import QDebugWidget
 
 ENCODING = "utf-8"
 
@@ -163,16 +166,6 @@ def AutoFmtSize(s: int) -> tuple[float, str]:
     else:
         return (s, "B")
 
-class Signals_depraced:
-    class SignalNoArg(QObject):
-        signal = Signal()
-    class SignalStr(QObject):
-        signal = Signal(str)
-    class SignalStrPipe(QObject):
-        signal = Signal(str, object)
-    class SignalTuple(QObject):
-        signal = Signal(tuple)
-
 
 """
 标签页对象须知：
@@ -225,7 +218,7 @@ class WinMain(QObject):
         """设置窗体内容"""
         self_ref = weakref.ref(self)
         # 创建主Widget
-        self.main_widget = QWidget()
+        self.main_widget = QWidget(self.win)
         self.win.setCentralWidget(self.main_widget)
         # 创建主布局
         self.main_layout = QVBoxLayout(self.main_widget)
@@ -272,6 +265,9 @@ class WinMain(QObject):
                 menu.addSeparator()
                 menu.addAction("关闭", lambda: self.closeTab(index))
                 menu.addAction("关闭所有", lambda: self.closeAllTabs())
+                menu.addSeparator()
+                menu.addAction("移出到新窗口", lambda: self.moveTabToNewWindow(index))
+
                 # 显示菜单
                 menu.exec(event.globalPos())
         self.tabwdg.contextMenuEvent = tabwdg_contextMenuEvent
@@ -352,8 +348,9 @@ class WinMain(QObject):
     @Slot(str, object)
     def NewPageMain(self, file: str, pipe: backend.Img2arrPIPE):
         # 通知接收函数：创建PageMain
-        tab = PageMain(self.win, file, pipe)
-        id = self.tabwdg.addTab(tab, os.path.basename(file))
+        title = os.path.basename(file)
+        tab = PageMain(self.tabwdg, self.win, title, pipe)
+        id = self.tabwdg.addTab(tab, title)
         # 切换到此tab
         self.tabwdg.setCurrentIndex(id)
         
@@ -512,7 +509,7 @@ class WinMain(QObject):
         # 删除widget
         # tab_widget.setParent(None)
         tab_widget.deleteLater()
-        # gc.collect()
+        gc.collect()
 
     def closeTab(self, index: int):
         # 判断是否为欢迎页面
@@ -527,6 +524,27 @@ class WinMain(QObject):
     def closeAllTabs(self):
         while self.tabwdg.count() > 1:
             self.closeTab(1)
+        # 输出自身ObjectTree
+        self.main_widget.dumpObjectTree()
+    def moveTabToNewWindow(self, index: int):
+        # 获取index所对widget
+        tab_widget = self.tabwdg.widget(index)
+        # gc.collect()
+        # 创建新窗口
+        title = f"img2arr - {self.tabwdg.tabText(index)}"
+        win = TabNewWindow(self.win, title, tab_widget)
+        win_gemetry = self.win.geometry()
+        win.setGeometry(
+            win_gemetry.x() + 100, 
+            win_gemetry.y() + 100, 
+            win_gemetry.width(), 
+            win_gemetry.height()
+        )
+        win.show()
+        # 删除tab
+        # self.tabwdg.removeTab(index)
+
+
     def closeEvent(self, event: QCloseEvent):
         # 创建线程，但不daemon
         self.close_thread = Thread(target=self.Close, args=(event,))
@@ -546,11 +564,22 @@ class WinMain(QObject):
         backend.Close()
         pass
 
-class PageMain(QWidget):
+class TabNewWindow(QMainWindow):
+    def __init__(self, parent_win: Optional[QWidget], title: str, widget_in: QWidget):
+        super().__init__(parent_win)
+        self.setWindowTitle(title)
+        self.main_wdg = QWidget(self)
+        self.setCentralWidget(self.main_wdg)
+        self.main_layout = QVBoxLayout(self.main_wdg)
+        self.main_wdg.setLayout(self.main_layout)
+        self.main_layout.addWidget(widget_in)
+
+class PageMain(QDebugWidget):
     PreOutViewUpdateSignal = Signal(tuple)
     CodeViewerOutViewUpdateSignal = Signal(tuple)
-    def __init__(self, win: QMainWindow, file: str, pipe: backend.Img2arrPIPE):
-        super().__init__()
+    def __init__(self, parent: Optional[QWidget], win: QMainWindow, title: str, pipe: backend.Img2arrPIPE):
+        super().__init__(parent)
+        self.setObjectName(f"PageMain: {title}")
         self_ref = weakref.ref(self)
         # self.app = app
         self.win = win
@@ -593,19 +622,26 @@ class PageMain(QWidget):
 
         self.main()
     def main(self):
+        self_ref = weakref.ref(self)
         # 创建布局管理器
-        self.main_layout = QVBoxLayout(self)
+        self.main_layout = QVBoxLayout()
+        self.setLayout(self.main_layout)
         self.main_layout.setContentsMargins(0, 0, 0, 0)
         self.setLayout(self.main_layout)
 
         # 6个QWidget
-        self.base_out = QWidget()
-        self.pre_out = QWidget()
-        # 创建扩展列表区域
-        self.pre_args = QWidget()
-        self.code_args = QWidget()
-        self.code_out = QWidget()
-        self.out_args = QWidget()
+        self.base_out = QDebugWidget()
+        self.base_out.setObjectName(f"{self.objectName()}:base_out")
+        self.pre_out = QDebugWidget()
+        self.pre_out.setObjectName(f"{self.objectName()}:pre_out")
+        self.pre_args = QDebugWidget()
+        self.pre_args.setObjectName(f"{self.objectName()}:pre_args")
+        self.code_args = QDebugWidget()
+        self.code_args.setObjectName(f"{self.objectName()}:code_args")
+        self.code_out = QDebugWidget()
+        self.code_out.setObjectName(f"{self.objectName()}:code_out")
+        self.out_args = QDebugWidget()
+        self.out_args.setObjectName(f"{self.objectName()}:out_args")
         self.frames = [self.base_out, self.pre_args, self.pre_out, self.code_args, self.code_out, self.out_args]
         # 设置属性
         for f in self.frames:
@@ -690,9 +726,10 @@ class PageMain(QWidget):
         # 确保背景色生效
         self.pre_args_scrollarea.setAutoFillBackground(True)
         # 创建容器Widget，边距为0，向下无限扩展
-        self.pre_args_main = QWidget()
+        self.pre_args_main = QDebugWidget()
+        self.pre_args_main.setObjectName(f"{self.objectName()}:pre_args_main")
         self.pre_args_main.setContentsMargins(0, 0, 0, 0)
-        self.pre_args_main.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        self.pre_args_main.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
         # 给pre_args_scrollarea
         self.pre_args_scrollarea.setWidget(self.pre_args_main)
         # 创建布局管理器
@@ -926,7 +963,7 @@ class PageMain(QWidget):
         self.out_preview_layout.addWidget(QLabel("预览"), alignment=Qt.AlignmentFlag.AlignLeft)
         # 预览的QTextEdit
         self.out_preview = self.OutPreviewTextEdit()
-        # self.out_preview.setReadOnly(True)
+        self.out_preview.setReadOnly(True)
         self.out_preview.setLineWrapMode(QTextEdit.LineWrapMode.WidgetWidth)
         self.out_preview.setWordWrapMode(QTextOption.WrapMode.WrapAnywhere)
         self.out_preview_layout.addWidget(self.out_preview)
@@ -1320,10 +1357,12 @@ class PageMain(QWidget):
         # 获取对应索引的预处理项
         obj = self.pre_list[index]
         # 移除界面中对应索引的预处理项
+        # obj.ui.setParent(None)
         obj.ui.deleteLater()
         # 删除self.pre_list中的元素
         del self.pre_list[index]
         # 删除wdg
+        # obj.setParent(None)
         obj.deleteLater()
         # 重置（其实不需要）
         # self.ResetPre()
@@ -1365,7 +1404,7 @@ class PageMain(QWidget):
                 try:
                     arg: ExtensionPyABC.CPointerArgType
                     arglen: int
-                    arg, arglen = py.update(it.current_buf(unsafe=True).arr, backend.threads)  # 如果函数返回两个值
+                    arg, arglen = py.update(it.current_buf(unsafe=True).arr, self.pipe.tasks if self.pipe.tasks > 0 else self.pipe.plproc.get_threads())  # 如果函数返回两个值
                 except:
                     logger.error(f"预处理 {i} 更新失败，错误信息：", exc_info=True)
                     continue
@@ -1411,7 +1450,7 @@ class PageMain(QWidget):
         if py is not None and hasattr(py, "ui_init"):
             try:
                 # 创建QWidget，并初始化
-                new_wdg = QWidget() 
+                new_wdg = QWidget()
                 # 初始化UI
                 py.ui_init(new_wdg, ext[backend.EXT_OP_CDLL], None)
                 # 尝试绑定py.img2arr_notify_update
@@ -1433,6 +1472,7 @@ class PageMain(QWidget):
         # 移除现有的QWidget，若不是code_args_default，则删除
         wdg = self.code_args_scrollarea.takeWidget()
         if wdg != self.code_args_default:
+            # wdg.setParent(None)
             wdg.deleteLater()
         # 如果err_cause不为空，则显示错误信息，且self.code_py覆盖为None
         if err_cause:
@@ -1466,7 +1506,7 @@ class PageMain(QWidget):
         if self.code_py is not None and hasattr(self.code_py, "update"):
             args: ExtensionPyABC.CPointerArgType
             arglen: int
-            args, arglen = self.code_py.update(arr, backend.threads)
+            args, arglen = self.code_py.update(arr, self.pipe.tasks if self.pipe.tasks > 0 else self.pipe.plproc.get_threads())
         else:
             args, arglen = backend.NULLPTR, 0
         # 调用编码预览
@@ -1599,6 +1639,7 @@ class PageMain(QWidget):
         # 移除现有的QWidget，若不是code_args_default，则删除
         wdg = self.out_args_scrollarea.takeWidget()
         if wdg != self.out_args_default:
+            # wdg.setParent(None)
             wdg.deleteLater()
         # 如果err_cause不为空，则显示错误信息，且self.code_py覆盖为None
         if err_cause:
@@ -1642,7 +1683,7 @@ class PageMain(QWidget):
         if self.code_py is not None and hasattr(self.code_py, "update"):
             args: ExtensionPyABC.CPointerArgType
             arglen: int
-            args, arglen = self.code_py.update(self.pipe.pre, backend.threads)
+            args, arglen = self.code_py.update(self.pipe.pre, self.pipe.tasks if self.pipe.tasks > 0 else self.pipe.plproc.get_threads())
         else:
             args, arglen = backend.NULLPTR, 0
         # 调用编码预览
@@ -1701,7 +1742,7 @@ class PageMain(QWidget):
     
     def deleteLater(self):
         """清理回调"""
-        logger.info("主页面清理")
+        logger.info("主页面被deleteLater()")
         # 删除线程
         notify = self.pre_update_notify
         self.pre_update_notify = None
@@ -1715,9 +1756,10 @@ class PageMain(QWidget):
                 notify.notify_all()
         # 删除所有预处理器界面
         for obj in self.pre_list:
+            # obj.setParent(None)
             obj.deleteLater()
         # 删除编码器界面
-        self.code_args_scrollarea.takeWidget().deleteLater()
+        # self.code_args_scrollarea.takeWidget().deleteLater()
         # 手动删除所有图片查看器
         # self.base_out_viewer.deleteLater()
         # self.pre_out_viewer.deleteLater()
@@ -1726,10 +1768,12 @@ class PageMain(QWidget):
         except: pass
         try: self.CodeViewerOutViewUpdateSignal.disconnect()
         except: pass
+        # 绑定删除信号
+        self.destroyed.connect(lambda: logger.info("主页面成功被destroyed()"))
         # 删除自身
         super().deleteLater()
     def __del__(self):
-        logger.info("主页面真的被删除了")
+        logger.info("主页面被__del__()")
 
 PageMainSelf = TypeVar('PageMainSelf', bound=PageMain)
 
@@ -1858,19 +1902,22 @@ class PreProcessor(QObject):
             self.py.img2arr_UpdateTiptext = img2arr_UpdateTiptext
 
         # 添加QScrollArea
-        scroll = QScrollArea()
+        scroll = CustomUI.FakeQScrollArea()
+        # scroll = QScrollArea()
+        # scroll = CustomUI.SeniorQScrollArea()
         scroll.setMinimumSize(0, 0)
         # scroll.setStyleSheet("background-color: blue;") #调试用
-        # 2. 水平忽略内部组件拉伸，同时尽可能拉伸；垂直最小
+        # 2. 水平忽略内部组件拉伸，同时尽可能拉伸；垂直手动调整
         scroll.setSizePolicy(
             QSizePolicy.Policy.Ignored, 
-            QSizePolicy.Policy.Minimum
+            # QSizePolicy.Policy.Minimum
+            QSizePolicy.Policy.Preferred
         )
         layout.addWidget(scroll)
         # 设置
         scroll.setWidgetResizable(True)
         scroll.setBackgroundRole(QPalette.ColorRole.Base)
-        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         # 事件，cb未选中，则tiptext带删除线，同时禁用scroll
         def cb_stateChanged(state: int):
@@ -1891,15 +1938,25 @@ class PreProcessor(QObject):
         
         cb.stateChanged.connect(cb_stateChanged)
         # 创建uwidg是scroll的widget
-        uwidg = QWidget()
+        uwidg = QWidget(ui)
         uwidg.setMinimumSize(0, 0)
         # 3. 水平拉伸，垂直自适应
         uwidg.setSizePolicy(
             QSizePolicy.Policy.Expanding, 
-            QSizePolicy.Policy.Minimum
+            # QSizePolicy.Policy.Minimum
+            QSizePolicy.Policy.Preferred
         )
             
         scroll.setWidget(uwidg)
+
+        # 当uwidg resize时，更新scroll的fixedHeight
+        def uwidg_resizeEvent(event: QResizeEvent):
+            self = self_ref()
+            if not self: return
+            QWidget.resizeEvent(scroll, event)
+            scroll.setFixedHeight(uwidg.height() + 10)
+            # logger.debug(f"uwidg_resizeEvent: {event.size()}")
+        # uwidg.resizeEvent = uwidg_resizeEvent
 
         return ui, uwidg
     def deleteLater(self):

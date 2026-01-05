@@ -2,10 +2,14 @@
     "version": 1,
     "disable_existing_loggers": false,
     "formatters": {
-        "simple": {
+        "release": {
             "()": "lib.logging_formatter.ColoredFormatter",
             "format": "[%(asctime)s.%(msecs)06d] %(levelname)s(%(name)s:%(lineno)d): %(message)s",
             "datefmt": "%H:%M:%S"
+        },
+        "simple": {
+            "()": "lib.logging_formatter.ColoredFormatter",
+            "format": "%(message)s"
         }
     },
     "handlers": {
