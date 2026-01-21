@@ -51,7 +51,7 @@ if [ "$ENABLE_AVX512" = true ]; then
 fi
 
 echo "链接主程序..."
-gcc main.c $LINK_OBJECTS -shared -fPIC -O3 -o $OUTPUT_FILE_NAME $DEFINE_FLAGS
+gcc main.c $LINK_OBJECTS -shared -fPIC -O3 -o $OUTPUT_FILE_NAME $DEFINE_FLAGS -static
 if [ $? -ne 0 ]; then
     echo -e "\033[31m链接失败\033[0m"
     exit 1

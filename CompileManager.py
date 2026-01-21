@@ -296,7 +296,8 @@ class WinMain(QObject):
                         "-shared", "-fPIC",
                         "-o", f"{self.name[:self.name.rfind('.')]}_{platform_str}.{soext}",
                         "-O3",
-                        "-std=c++23"
+                        "-std=c++23",
+                        "-static"
                     ], cwd=self.dir, check=True)
                 else:
                     output = self.target_output
@@ -337,7 +338,8 @@ class WinMain(QObject):
                                 "main.c",
                                 "-shared", "-fPIC",
                                 "-o", output,
-                                "-O3"
+                                "-O3",
+                                "-static"
                             ], cwd=self.dir, check=True)
                         # 否则，如果存在main.cpp，则编译main.cpp
                         elif os.path.isfile(os.path.join(self.dir, "main.cpp")):
@@ -347,6 +349,7 @@ class WinMain(QObject):
                                 "-shared", "-fPIC",
                                 "-o", output,
                                 "-O3",
+                                "-static"
                             ], cwd=self.dir, check=True)
                         # 否则，提示错误
                         else:

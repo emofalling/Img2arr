@@ -150,7 +150,7 @@ class CustomUI:
     @staticmethod
     class GenerelPicViewer(QDebugWidget):
         """一个通用的图片查看器。继承于QWidget"""
-        def __init__(self, img: NDArray, prefix = ""):
+        def __init__(self, img: NDArray, prefix = "", format: QImage.Format = QImage.Format.Format_RGBA8888):
             super().__init__()
             self.setObjectName(f"GenerelPicViewer: {prefix}")
             self_ref = weakref.ref(self)
@@ -206,7 +206,7 @@ class CustomUI:
             self.gpview.contextMenuEvent = lambda e: (self := self_ref()) and self.__gpview_contextMenuEvent(e)
             self.gpview.keyPressEvent = lambda e: (self := self_ref()) and self.__gpview_keyPressEvent(e)
             # 刷新
-            self.update_arr(img)
+            self.update_arr(img, format)
         # 绑定100%按钮的点击事件
         def __btn_100_click(self):
             # self = self_ref()
@@ -289,15 +289,13 @@ class CustomUI:
             # if self is None: return
             if e.key() == Qt.Key.Key_C and e.modifiers() == Qt.KeyboardModifier.ControlModifier:
                 self.copy_img()
-        def update_arr(self, img: NDArray):
+        def update_arr(self, img: NDArray, format: QImage.Format = QImage.Format.Format_RGBA8888):
             """更换数组"""
             # self.img = img
             self.img_width = img.shape[IMG_SHAPE_W]
             self.img_height = img.shape[IMG_SHAPE_H]
             
-            # 直接使用numpy数组的数据指针创建QImage，避免拷贝
-            bytes_per_line = img.shape[IMG_SHAPE_C] * self.img_width  # RGBA8888格式，每像素4字节
-            self.qimage = QImage(img.data, self.img_width, self.img_height, bytes_per_line, QImage.Format.Format_RGBA8888)
+            self.qimage = QImage(img.data, self.img_width, self.img_height, format)
             
             # 创建QPixmap
             self.qpixmap = QPixmap.fromImage(self.qimage)

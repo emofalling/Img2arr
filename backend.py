@@ -88,6 +88,9 @@ arch = SpecialArch.GetNormalArchName(arch)
 
 PlProcCoreName = f"PlProcCore_{system}_{arch}.{soext}"
 
+# 检查PlProcCore是否存在
+if not os.path.exists(os.path.join(LIB_PATH, PlProcCoreName)):
+    raise ImportError("PlProcCore not found")
 PlProcCore = ctypes.CDLL(os.path.join(LIB_PATH, PlProcCoreName), use_errno=True, winmode=0)
 """
 int SingleCore(char* caller, void* func, void* args, int *ret,

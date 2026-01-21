@@ -40,7 +40,7 @@ if ($EnableAVX512) {
 }
 
 Write-Host "链接主程序..." -ForegroundColor Green
-gcc main.c $LinkObjects -shared -fPIC -O3 -o $OutputFileName $DefineFlags
+gcc main.c $LinkObjects -shared -fPIC -O3 -o $OutputFileName $DefineFlags -static
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
 Write-Host "编译完成: $OutputFileName" -ForegroundColor Green

@@ -166,7 +166,6 @@ def AutoFmtSize(s: int) -> tuple[float, str]:
     else:
         return (s, "B")
 
-
 """
 标签页对象须知：
 如果传入的QWidget具有DestroyEvent方法，则：
@@ -195,6 +194,8 @@ class WinMain(QObject):
         self.load_queue = queue.Queue()
         open_file_thr = Thread(target=self.thread_Open, daemon=True)
         open_file_thr.start()
+
+        
 
         # 在窗口加载后，线程加载扩展
         QTimer.singleShot(0, lambda: Thread(target=self.Load, daemon=True).start())
@@ -272,6 +273,7 @@ class WinMain(QObject):
                 menu.exec(event.globalPos())
         self.tabwdg.contextMenuEvent = tabwdg_contextMenuEvent
 
+
         # 绑定主UI
         self.main_layout.addWidget(self.tabwdg)
         # 创建状态的Signal
@@ -287,6 +289,8 @@ class WinMain(QObject):
             self.status_bar.clearMessage()
         else:
             self.status_bar.showMessage(text)
+        
+
     @Slot(str)
     def Main(self, error: str):
         """当环境准备好之后，要执行的函数"""
