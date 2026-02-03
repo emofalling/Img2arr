@@ -74,6 +74,10 @@ typedef struct {
 
     // mode 转换模式
     int mode;
+    // LUT: R+G+B。应有256*3=768个元素，每个元素在0~<当前色彩空间最大值>之间。
+    uint8_t *lut;
+    // 是否在预览中使用LUT。
+    bool use_lut_in_preview;
 }__attribute__((packed)) args_t;
 
 #include <stdio.h> //删
@@ -145,6 +149,18 @@ static void rgba8888_to_rgb565(uint8_t* in, uint8_t* out, size_t start, size_t e
         out[o + 1] = ((g & 0b00011100) << 3) | (b /* & 0b11111000 */) >> 3;
     }
 }
+static void rgba8888_to_rgb565_lut(uint8_t* in, uint8_t* out, size_t start, size_t end, uint8_t *lut){
+    uint8_t *r_lut = lut, *g_lut = lut + 256, *b_lut = lut + 512;
+    for(size_t i = start * 4, o = start * 2; i < end * 4; i += 4, o += 2){
+        uint8_t r = in[i + 0];
+        uint8_t g = in[i + 1];
+        uint8_t b = in[i + 2];
+        // r_l, b_l:0b000xxxxx, g_l:0b00xxxxxx
+        uint8_t r_l = r_lut[r] & 0b00011111, g_l = g_lut[g] & 0b00111111, b_l = b_lut[b] & 0b00011111;
+        out[o + 0] = (r_l << 3) | ((g_l) >> 3);
+        out[o + 1] = ((g_l & 0b00000111) << 5) | b_l;
+    }
+}
 
 static void rgba8888_to_rgb565_preview(uint8_t* in, uint8_t* out, size_t start, size_t end){
     for(size_t i = start * 4; i < end * 4; i += 4){
@@ -154,6 +170,21 @@ static void rgba8888_to_rgb565_preview(uint8_t* in, uint8_t* out, size_t start, 
         out[i + 0] = (r & 0b11111000) | (r >> 5);
         out[i + 1] = (g & 0b11111100) | (g >> 6);
         out[i + 2] = (b & 0b11111000) | (b >> 5);
+        out[i + 3] = 255;
+    }
+}
+
+static void rgba8888_to_rgb565_preview_lut(uint8_t* in, uint8_t* out, size_t start, size_t end, uint8_t *lut){
+    uint8_t *r_lut = lut, *g_lut = lut + 256, *b_lut = lut + 512;
+    for(size_t i = start * 4; i < end * 4; i += 4){
+        uint8_t r = in[i + 0];
+        uint8_t g = in[i + 1];
+        uint8_t b = in[i + 2];
+        // r_l, b_l:0b000xxxxx, g_l:0b00xxxxxx
+        uint8_t r_l = r_lut[r] & 0b00011111, g_l = g_lut[g] & 0b00111111, b_l = b_lut[b] & 0b00011111;
+        out[i + 0] = (r_lut[r] << 3) | (r_lut[r] >> 2);
+        out[i + 1] = (g_lut[g] << 2) | (g_lut[g] >> 4);
+        out[i + 2] = (b_lut [b] << 3) | (b_lut[b] >> 2);
         out[i + 3] = 255;
     }
 }
@@ -169,6 +200,20 @@ static void rgba8888_to_rgb332(uint8_t* in, uint8_t* out, size_t start, size_t e
     }
 }
 
+static void rgba8888_to_rgb332_lut(uint8_t* in, uint8_t* out, size_t start, size_t end, uint8_t *lut){
+    uint8_t *r_lut = lut, *g_lut = lut + 256, *b_lut = lut + 512;
+    for(size_t i = start * 4, o = start * 1; i < end * 4; i += 4, o += 1){
+        uint8_t r = in[i + 0];
+        uint8_t g = in[i + 1];
+        uint8_t b = in[i + 2];
+        // r_l, g_l:0b00000xxx, b_l:0b00000xx
+        uint8_t r_l = r_lut[r] & 0b00000111, g_l = g_lut[g] & 0b00000111, b_l = b_lut[b] & 0b00000011;
+        out[o] = (r_l << 5) |
+                 (g_l << 2) | 
+                 (b_l);
+    }
+}
+
 static void rgba8888_to_rgb332_preview(uint8_t* in, uint8_t* out, size_t start, size_t end){
     for(size_t i = start * 4; i < end * 4; i += 4){
         uint8_t r = in[i + 0];
@@ -177,6 +222,21 @@ static void rgba8888_to_rgb332_preview(uint8_t* in, uint8_t* out, size_t start, 
         out[i + 0] = (r & 0b11100000) | (r & 0b11100000) >> 3 | (r /* & 0b11100000 */) >> 6;
         out[i + 1] = (g & 0b11100000) | (g & 0b11100000) >> 3 | (g /* & 0b11100000 */) >> 6;
         out[i + 2] = (b & 0b11000000) | (b & 0b11000000) >> 2 | (b & 0b11000000) >> 4 | (b /* & 0b11000000 */) >> 6;
+        out[i + 3] = 255;
+    }
+}
+
+static void rgba8888_to_rgb332_preview_lut(uint8_t* in, uint8_t* out, size_t start, size_t end, uint8_t *lut){
+    uint8_t *r_lut = lut, *g_lut = lut + 256, *b_lut = lut + 512;
+    for(size_t i = start * 4; i < end * 4; i += 4){
+        uint8_t r = in[i + 0];
+        uint8_t g = in[i + 1];
+        uint8_t b = in[i + 2];
+        // r_l, g_l:0b00000xxx, b_l:0b00000xx
+        uint8_t r_l = r_lut[r] & 0b00000111, g_l = g_lut[g] & 0b00000111, b_l = b_lut[b] & 0b00000011;
+        out[i + 0] = (r_l << 5) | (r_l << 2) | (r_l >> 1);
+        out[i + 1] = (g_l << 5) | (g_l << 2) | (g_l >> 1);
+        out[i + 2] = (b_l << 6) | (b_l << 4) | (b_l << 2) | b_l;
         out[i + 3] = 255;
     }
 }
@@ -207,15 +267,29 @@ SHARED int f1(size_t threads, size_t idx, args_t* args, uint8_t* in_buf, uint8_t
     const size_t start = (size * idx / threads);
     const size_t end = (size * (idx + 1) / threads);
     // Implement here. If no return
-    switch(args->mode){
-        case RGB565:
-            rgba8888_to_rgb565(in_buf, out_buf, start, end);
-            break;
-        case RGB332:
-            rgba8888_to_rgb332(in_buf, out_buf, start, end);
-            break;
-        default:
-            return -1;
+    if (args->lut){
+        switch(args->mode){
+            case RGB565:
+                rgba8888_to_rgb565_lut(in_buf, out_buf, start, end, args->lut);
+                break;
+            case RGB332:
+                rgba8888_to_rgb332_lut(in_buf, out_buf, start, end, args->lut);
+                break;
+            default:
+                return -1;
+        }
+    }
+    else{
+        switch(args->mode){
+            case RGB565:
+                rgba8888_to_rgb565(in_buf, out_buf, start, end);
+                break;
+            case RGB332:
+                rgba8888_to_rgb332(in_buf, out_buf, start, end);
+                break;
+            default:
+                return -1;
+        }
     }
     return 0;
 }
@@ -264,15 +338,29 @@ SHARED int f1p(size_t threads, size_t idx, args_t* args, uint8_t* in_buf, uint8_
     const size_t start = (size * idx / threads);
     const size_t end = (size * (idx + 1) / threads);
     // Implement here.
-    switch(args->mode){
-        case RGB565:
-            rgba8888_to_rgb565_preview(in_buf, out_buf, start, end);
-            break;
-        case RGB332:
-            rgba8888_to_rgb332_preview(in_buf, out_buf, start, end);
-            break;
-        default:
-            return -1;
+    if (args->lut && args->use_lut_in_preview){
+        switch(args->mode){
+            case RGB565:
+                rgba8888_to_rgb565_preview_lut(in_buf, out_buf, start, end, args->lut);
+                break;
+            case RGB332:
+                rgba8888_to_rgb332_preview_lut(in_buf, out_buf, start, end, args->lut);
+                break;
+            default:
+                return -1;
+        }
+    }
+    else{
+        switch(args->mode){
+            case RGB565:
+                rgba8888_to_rgb565_preview(in_buf, out_buf, start, end);
+                break;
+            case RGB332:
+                rgba8888_to_rgb332_preview(in_buf, out_buf, start, end);
+                break;
+            default:
+                return -1;
+        }
     }
     return 0;
 }

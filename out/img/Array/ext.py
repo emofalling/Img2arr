@@ -73,7 +73,7 @@ class UI(abcExt.UI):
 
         num_base_layout.addWidget(QLabel("进制(2~62): "))
         self.num_base_edit = QSpinBox()
-        self.num_base_edit.setFixedWidth(40)
+        # self.num_base_edit.setFixedWidth(40)
         self.num_base_edit.setRange(2, 62)
         self.num_base_edit.setValue(self.num_base)
         num_base_layout.addWidget(self.num_base_edit)

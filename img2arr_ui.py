@@ -317,6 +317,7 @@ class WinMain(QObject):
     def Load(self):
         """窗体启动完成后，要初始化的函数。这部分将作为线程执行（因此需特别注意线程安全）"""
         time_start = time.perf_counter()
+
         error = ""
         # 加载扩展
         self.setstatus("准备导入扩展", True)
@@ -330,9 +331,9 @@ class WinMain(QObject):
             self.setstatus(f"就绪，启动时间：{(time.perf_counter() - time_start)*1000:.2f}ms", True)
         else:
             self.setstatus(error, True)
-            
         # 发送信号，通知主线程
         self.load_signal.emit(error)
+
 
     def LoadExts(self):
         self.ext_err_list: list[tuple[str, Exception]] = []
@@ -347,7 +348,7 @@ class WinMain(QObject):
             logging.warning("设备配置错误，将使用默认设备: [0, 1, 2, 3]")
             devices = DEVICES_DEFAULT
 
-        self.ext = backend.load_exts(loadf, errf, reload_feautures=typing.cast(Sequence[int], devices)) # pylance ***
+        self.ext = backend.load_exts(loadf, errf, reload_feautures=typing.cast(Sequence[int], devices))
     
     @Slot(str, object)
     def NewPageMain(self, file: str, pipe: backend.Img2arrPIPE):
