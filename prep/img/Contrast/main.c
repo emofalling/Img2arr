@@ -27,34 +27,39 @@ SHARED int io_GetOutInfo(void* args, size_t in_shape[2], size_t out_shape[2], in
 #define SaturationtoU8(x) ((x) > 255 ? 255 : ((x) < 0 ? 0 : (x)))
 
 // new_value = (old_value - UGRAY) * contrast_factor + UGRAY
-/*
-[pack]struct{
-    bool useint; //是否使用纯整数运算。如果是，性能将更高，但是画面精准度会下降。
-    uint16_t       contrast; //对比度。百分比，100=1
-    uint8_t       centgray; //中心灰度
-}
-*/
+
 
 #define ROUND_DIV(a, b) (((a) + (b) / 2) / (b))
 
 typedef struct {
     bool useint;
     uint16_t contrast;
-    uint8_t centgray;
+    uint8_t centr;    //基准色R
+    uint8_t centg;    //基准色G
+    uint8_t centb;    //基准色B
 }__attribute__((packed)) args_t;
 
-static int main(bool useint, int contrast_int, int centgray_int, 
-    size_t start_i, size_t end_i, 
-    uint8_t* in_buf, uint8_t* out_buf, size_t shape[2]){
+
+
+SHARED int f1(size_t threads, size_t idx, args_t* args, uint8_t* in_buf, uint8_t* out_buf, size_t in_shape[2]){
+    bool useint = args->useint;
+    int contrast_int = args->contrast;
+    int centr_int = args->centr;
+    int centg_int = args->centg;
+    int centb_int = args->centb;
+
+    const size_t pixels = in_shape[0] * in_shape[1];
+    const size_t start_i = (pixels * idx / threads) * 4;
+    const size_t end_i = (pixels * (idx + 1) / threads) * 4;
 
     if(useint){
         for(size_t p = start_i; p < end_i; p += 4){
             int r = in_buf[p + 0];
             int g = in_buf[p + 1];
             int b = in_buf[p + 2];
-            r = /*ROUND_DIV(*/(r - centgray_int) * contrast_int / 100/*)*/ + centgray_int;
-            g = /*ROUND_DIV(*/(g - centgray_int) * contrast_int / 100/*)*/ + centgray_int;
-            b = /*ROUND_DIV(*/(b - centgray_int) * contrast_int / 100/*)*/ + centgray_int;
+            r = /*ROUND_DIV(*/(r - centr_int) * contrast_int / 100/*)*/ + centr_int;
+            g = /*ROUND_DIV(*/(g - centg_int) * contrast_int / 100/*)*/ + centg_int;
+            b = /*ROUND_DIV(*/(b - centb_int) * contrast_int / 100/*)*/ + centb_int;
             out_buf[p + 0] = SaturationtoU8(r);
             out_buf[p + 1] = SaturationtoU8(g);
             out_buf[p + 2] = SaturationtoU8(b);
@@ -63,42 +68,28 @@ static int main(bool useint, int contrast_int, int centgray_int,
     }
     else{
         float contrast_float = (float)contrast_int / 100.0f;
-        float centgray_float = (float)centgray_int / 255.0f;
+        float centr_intf = (float)centr_int / 255.0f;
+        float centg_intf = (float)centg_int / 255.0f;
+        float centb_intf = (float)centb_int / 255.0f;
         for(size_t p = start_i; p < end_i; p += 4){
             float r = (float)in_buf[p + 0] / 255.0f;
             float g = (float)in_buf[p + 1] / 255.0f;
             float b = (float)in_buf[p + 2] / 255.0f;
-            float out_r = (r - centgray_float) * contrast_float + centgray_float;
-            float out_g  = (g - centgray_float) * contrast_float + centgray_float;
-            float out_b  = (b - centgray_float) * contrast_float + centgray_float;
+            float out_r = (r - centr_intf) * contrast_float + centr_intf;
+            float out_g  = (g - centg_intf) * contrast_float + centg_intf;
+            float out_b  = (b - centb_intf) * contrast_float + centb_intf;
             out_buf[p + 0] = SaturationtoU8(roundf(out_r * 255.0f));
             out_buf[p + 1] = SaturationtoU8(roundf(out_g * 255.0f));
             out_buf[p + 2] = SaturationtoU8(roundf(out_b * 255.0f));
             out_buf[p + 3] = in_buf[p + 3];
         }
     }
+
+    return 0;
 }
 
 SHARED int f0(args_t* args, uint8_t* in_buf, uint8_t* out_buf, size_t in_shape[2]){
     
-    bool useint = args->useint;
-    int contrast_int = args->contrast;
-    int centgray_int = args->centgray;
+    return f1(1, 0, args, in_buf, out_buf, in_shape);
     
-    const size_t pixels = in_shape[0] * in_shape[1];
-
-    return main(useint, contrast_int, centgray_int, 0, pixels * 4, in_buf, out_buf, in_shape);
-    
-}
-
-SHARED int f1(size_t threads, size_t idx, args_t* args, uint8_t* in_buf, uint8_t* out_buf, size_t in_shape[2]){
-    bool useint = args->useint;
-    int contrast_int = args->contrast;
-    int centgray_int = args->centgray;
-
-    const size_t pixels = in_shape[0] * in_shape[1];
-    const size_t start_i = (pixels * idx / threads) * 4;
-    const size_t end_i = (pixels * (idx + 1) / threads) * 4;
-
-    return main(useint, contrast_int, centgray_int, start_i, end_i, in_buf, out_buf, in_shape);
 }

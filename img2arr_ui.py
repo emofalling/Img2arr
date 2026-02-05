@@ -49,7 +49,7 @@ from typing import (
 import typing
 
 from lib.CustomWidgets import (
-    CustomUI, CustomBrush
+    CustomUI, CustomBrush, ColorDialog_getColor
 )
 
 from lib import ExtensionPyABC
@@ -165,6 +165,7 @@ def AutoFmtSize(s: int) -> tuple[float, str]:
         return (s/1e3, "KB")
     else:
         return (s, "B")
+    
 
 """
 标签页对象须知：
@@ -1983,6 +1984,7 @@ if __name__ == "__main__":
     backend.SetParallelThreads(threads)
     # 加载UI
     app = QApplication(sys.argv)
+    
     # 获取所有风格
     styles = QStyleFactory.keys()
     logger.debug(f"可用风格：\n{'\n'.join(styles)}")

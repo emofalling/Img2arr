@@ -1,12 +1,12 @@
 import json
 from numpy import uint8
 from numpy.typing import NDArray
-from ctypes import CDLL, c_void_p, c_uint8, c_int, POINTER
+from ctypes import CDLL, c_bool, c_uint8, c_uint16, c_int, POINTER, Structure, sizeof, byref
 import struct
 import time
 import weakref
 
-from PySide6.QtWidgets import QWidget, QLabel, QCheckBox, QSlider, QVBoxLayout, QHBoxLayout
+from PySide6.QtWidgets import QWidget, QLabel, QPushButton, QCheckBox, QSlider, QVBoxLayout, QHBoxLayout, QSizePolicy
 
 from PySide6.QtCore import Qt, QTimer
 
@@ -49,28 +49,27 @@ class UI(abcExt.UI):
         self.contrast.setPageStep(20)
         # 设置刻度位置，在下方
         self.contrast.setTickPosition(QSlider.TickPosition.TicksBelow)
-        # 同理，中心灰度
-        gtext = QLabel("中央灰度：")
-        layout.addWidget(gtext)
+        # 基准色标题
+        layout_gray_title = QHBoxLayout()
+        layout_gray_title.setContentsMargins(0, 0, 0, 0)
+        layout.addLayout(layout_gray_title)
+        gtext = QLabel("基准色：")
+        layout_gray_title.addWidget(gtext)
+        gtext.setToolTip("对比度的参考颜色。\n当对比度<100%时，图像会靠近此颜色；\n当对比度>100%时，图像会远离此颜色。\n大部分图像处理工具的基准色都是中性灰(128, 128, 128)，即此扩展的默认基准色。")
+        # 恢复默认
+        layout_gray_title.addStretch()
+        gray_setdefault_button = QPushButton("恢复默认")
+        gray_setdefault_button.setToolTip("将基准色设为默认值：\n(128, 128, 128)。")
+        layout_gray_title.addWidget(gray_setdefault_button)
+        def set_default():
+            self = self_ref()
+            if self is None: return
+            self.set_gray_color((128, 128, 128, 255))
+        gray_setdefault_button.clicked.connect(set_default)
         # 横向布局
         layout_gray = QHBoxLayout()
         layout_gray.setContentsMargins(0, 0, 0, 0)
         layout.addLayout(layout_gray)
-        # 文本：显示当前值，右对齐
-        gtext = QLabel("128")
-        gtext.setAlignment(Qt.AlignmentFlag.AlignRight)
-        layout_gray.addWidget(gtext)
-        # 文本宽度固定4个字符
-        gtext.setFixedWidth(QFontMetrics(gtext.font()).horizontalAdvance("-255"))
-        # 创建滑动条(-255~255)，占满宽度
-        self.gray = QSlider(Qt.Orientation.Horizontal)
-        layout_gray.addWidget(self.gray)
-        self.gray.setRange(0, 255)
-        self.gray.setValue(128)
-        self.gray.setTickInterval(15)
-        self.gray.setPageStep(15)
-        # 设置刻度位置，在下方
-        self.gray.setTickPosition(QSlider.TickPosition.TicksBelow)
         # 回调
         def contrast_changed(value):
             self = self_ref()
@@ -79,48 +78,82 @@ class UI(abcExt.UI):
             ctext.setText(str(value) + "%")
             # 更新
             self.Update()
-        def gray_changed(value):
+        self.contrast.valueChanged.connect(contrast_changed)
+        # 颜色框
+        self.gray_color: tuple[int, int, int] = (128, 128, 128)
+        self.gray_widget = QWidget()
+        layout_gray.addWidget(self.gray_widget)
+        # 设置高度占满，宽度固定50px
+        # self.gray_widget.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.gray_widget.setFixedWidth(50)
+        self.gray_widget.setFixedHeight(50)
+        self.set_gray_color((*self.gray_color, 255), False)
+
+        
+        # 设置颜色
+        def click_gray_widget(e):
             self = self_ref()
             if self is None: return
-            # 刷新文本
-            gtext.setText(str(value))
-            # 更新
-            self.Update()
-        self.contrast.valueChanged.connect(contrast_changed)
-        self.gray.valueChanged.connect(gray_changed)
-        # 使用整数
+            color_rgba = (*self.gray_color, 255)
+            self.ext_ColorDialogGetColor(widget, color_rgba, currentColorChanged=self.set_gray_color)
+        
+        self.gray_widget.mousePressEvent = click_gray_widget
+
+
         self.useint = QCheckBox("高精度")
         layout.addWidget(self.useint)
         self.useint.stateChanged.connect(self.Update)
         # 添加悬浮提示
-        self.useint.setToolTip("保证画面的质量（尤其是极端情况），处理速度会显著降低。")
+        self.useint.setToolTip("保证画面的质量（尤其是极端情况）。\n打开此模式后，使用FP32进行处理，处理速度会稍微降低。")
 
         
         # 更新提示文本
         self.UpdateTiptext()
         
 
+    # 更新颜色
+    def set_gray_color(self, color: tuple[int, int, int, int] | None, _is_non_initial=True):
+        if color is None: return
+        r, g, b, a = color
+        self.gray_color = (r, g, b)
+        self.gray_widget.setStyleSheet(f"background-color: rgb({r}, {g}, {b});")
+        if _is_non_initial: self.Update()
     # 更新提示文本
     def UpdateTiptext(self):
-        text = f"对比度: {self.contrast.value()}%, 中央灰度: {self.gray.value()}"
+        text = f"对比度: {self.contrast.value()}%, 基准色: ({self.gray_color[0]}, {self.gray_color[1]}, {self.gray_color[2]})"
         if self.useint.isChecked():
             text += ", 整数"
         self.img2arr_UpdateTiptext(text)
     def Update(self):
         self.UpdateTiptext()
         self.img2arr_notify_update()
+    """
+    typedef struct {
+        bool useint;
+        uint16_t contrast;
+        uint8_t centr;    //基准色R
+        uint8_t centg;    //基准色G
+        uint8_t centb;    //基准色B
+    }__attribute__((packed)) args_t;
+    """
+    class arg_t(Structure):
+        _fields_ = (
+            ("useint", c_bool),
+            ("contrast", c_uint16),
+            ("centr", c_uint8),
+            ("centg", c_uint8),
+            ("centb", c_uint8)
+        )
+        _pack_ = 1
+
     def update(self, arr, threads):
-        # 构造参数
-        #
-        # [pack]struct{
-        #     bool useint; //是否使用纯整数运算。如果是，性能将更高，但是画面精准度会下降。
-        #     uint16_t contrast; //对比度，百分比表示。
-        #     uint8_t centgray; //中心灰度
-        # }
-        arg = struct.pack(b"=BHB", not self.useint.isChecked(), self.contrast.value(), self.gray.value())
-        # print("S:",arg.hex())
-        # 更新
-        return arg, len(arg)
+        arg = self.arg_t()
+        arg.useint = self.useint.isChecked()
+        arg.contrast = self.contrast.value()
+        arg.centr = self.gray_color[0]
+        arg.centg = self.gray_color[1]
+        arg.centb = self.gray_color[2]
+        return byref(arg), sizeof(arg)
 
 
         

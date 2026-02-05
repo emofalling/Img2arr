@@ -1,17 +1,17 @@
 from PySide6.QtWidgets import (QApplication, QWidget, QMainWindow, 
                                QFrame, QMenu, 
-                               QScrollBar, 
+                               QScrollBar, QDialog, 
                                QHBoxLayout, QVBoxLayout, QGridLayout, 
                                QLabel, QPushButton, QCheckBox, QScrollArea, 
                                QGraphicsView, QGraphicsScene, QGraphicsPixmapItem,
                                QMessageBox, QFileDialog,
-                               QSizePolicy, 
+                               QSizePolicy, QColorDialog
 )
 from PySide6.QtCore import (Qt, QObject, QRectF
                             
 )
 
-from PySide6.QtGui import (QPixmap, QPainter, QImage, QColor, QBrush, 
+from PySide6.QtGui import (QPixmap, QPainter, QImage, QColor, QBrush,
                            QResizeEvent, QWheelEvent, QContextMenuEvent, QKeyEvent
 )
 
@@ -22,6 +22,8 @@ import os.path
 from functools import partial
 
 from numpy.typing import NDArray
+
+from typing import Optional, Callable, Sequence
 
 import logging
 
@@ -347,3 +349,28 @@ class CustomBrush:
         # 创建棋盘格纹理
         brush = QBrush(tile_pixmap)
         return brush
+
+def ColorDialog_getColor(parent: QWidget | None = None, initialColor: tuple[int, int, int, int] | None = None, show_alpha = False, currentColorChanged: Callable[[tuple[int, int, int, int]]] | None = None) -> tuple[int, int, int, int] | None:
+    """颜色选择对话框"""
+    dialog = QColorDialog(parent)
+    if initialColor is not None:
+        if len(initialColor) not in (3, 4):
+            raise ValueError("initialColor must be a tuple of length 3 or 4")
+        color = QColor(*initialColor)
+        dialog.setCurrentColor(color)
+
+    if show_alpha:
+        dialog.setOption(QColorDialog.ColorDialogOption.ShowAlphaChannel, True)
+    
+    if currentColorChanged is not None:
+        def on_current_color_changed(color: QColor):
+            currentColorChanged((color.red(), color.green(), color.blue(), color.alpha()))
+        dialog.currentColorChanged.connect(on_current_color_changed)
+
+    result = dialog.exec()
+
+    if result == QDialog.DialogCode.Accepted:
+        color = dialog.currentColor()
+        return (color.red(), color.green(), color.blue(), color.alpha())
+    else: 
+        return None

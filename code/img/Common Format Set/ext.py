@@ -92,11 +92,21 @@ class UI(abcExt.UI):
                 return
 
             self.lut_path_edit.setText(path)
-            self.open_lut()
+            # self.open_lut()
         
         lut_button = QPushButton("浏览")
         lut_path_layout.addWidget(lut_button)
         lut_button.clicked.connect(open_lut_file_dialog)
+        # lineedit绑定open_lut
+        self.lut_path_edit.textChanged.connect(lambda: self.open_lut(silence=True) if (self := self_ref()) else None)
+
+        # 警告文本，默认隐藏，可复制
+        self.warn_label = QLabel("当前LUT文件存在问题，但显示在了一个错误的时机")
+        self.warn_label.setStyleSheet('color: red')
+        self.warn_label.setWordWrap(True)
+        self.warn_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse | Qt.TextInteractionFlag.LinksAccessibleByKeyboard | Qt.TextInteractionFlag.LinksAccessibleByMouse)
+        lut_layout.addWidget(self.warn_label)
+        self.warn_label.hide()
 
         # 在预览时使用LUT
         self.lut_in_preview = QCheckBox("在预览中使用LUT")
@@ -140,9 +150,14 @@ class UI(abcExt.UI):
                 QMessageBox.information(None, "成功", f"打开LUT文件成功: {self.lut_path_edit.text()}", QMessageBox.StandardButton.Ok)
             self.img2arr_notify_update()
         except Exception as e:
+            err_msg = f"打开LUT文件失败: \n{e.__class__.__name__}: {e}"
             if not silence:
-                logger.warning(f"打开LUT文件失败: {e}")
-                QMessageBox.critical(None, "错误", f"打开LUT文件失败: {e}", QMessageBox.StandardButton.Ok)
+                logger.warning(err_msg)
+                QMessageBox.critical(None, "错误", err_msg, QMessageBox.StandardButton.Ok)
+            self.warn_label.setText(err_msg)
+            self.warn_label.show()
+        else:
+            self.warn_label.hide()
     """
     typedef struct {
         // 这里填写参数列表
