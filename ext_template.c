@@ -94,48 +94,6 @@ SHARED int io_GetOutInfo(args_t* args, size_t in_shape[ ], size_t out_shape[ ], 
     return 0;
 }
 
-/**
- * @brief 获取预览图像输出信息。在调用`f0p`或`f1p`之前会被调用以确认输出缓冲区大小及其属性。仅在编码阶段扩展中有效。
- * Get output data information. It will be called before calling `f0` or `f1` to confirm the size and attributes of the output buffer. Only valid in the encoding stage extension.
- * @param args[in/out] 参数解析结构体。
- * Parameter parsing structure.
- * @param in_shape[in] 输入缓冲区形状。关于具体内容，参考下面的注释说明。
- * Input buffer shape. For specific content, refer to the comment description below.
- * @param out_shape[out] 输出缓冲区形状。关于具体内容，参考下面的注释说明。
- * Output buffer shape. For specific content, refer to the comment description below.
- * @return 错误码，0表示成功，非0表示失败。若函数无返回，则返回随机值
- * Error code, 0 means success, non-0 means failure. If the function has no return, it returns a random value
- */
-SHARED int io_GetViewOutInfo(args_t* args, size_t in_shape[ ], size_t out_shape[ ]){
-    // 指定输出的尺寸及其属性
-    // Specify the size and attributes of the output
-    // const size_t height = in_shape[0];
-    // const size_t width = in_shape[1];
-    // out_shape[0] = height;
-    // out_shape[1] = width;
-    // *attr = ATTR_NONE;
-    // Other Implement here.
-    return 0;
-}
-
-/**
- * @brief 主函数：单线程实现。
- * Single-threaded implementation.
- * @param args[in/out] 参数解析结构体。
- * Parameter parsing structure.
- * @param in_buf[in] 输入缓冲区，格式为`[*in_shape, 4]`。
- * Input buffer, format is `[*in_shape, 4]`.
- * @param out_buf[out] 输出缓冲区。大小由`io_GetOutInfo`指定。
- * Output buffer. The size is specified by `io_GetOutInfo`.
- * @param in_shape[in] 输入缓冲区形状。关于具体内容，参考下面的注释说明。
- * Input buffer shape. For specific content, refer to the comment description below.
- * @return 错误码，0表示成功，非0表示失败。若函数无返回，则可能返回随机值
- * Error code, 0 means success, non-0 means failure. If the function has no return, it may return a random value.
- */
-SHARED int f0(args_t* args, uint8_t* in_buf, uint8_t* out_buf, size_t in_shape[ ]){
-    // Implement here.
-    return 0;
-}
 
 /**
  * @brief 主函数：多线程实现。
@@ -166,21 +124,46 @@ SHARED int f1(size_t threads, size_t idx, args_t* args, uint8_t* in_buf, uint8_t
 }
 
 /**
- * @brief 预览图像函数：单线程实现。仅在编码阶段扩展中有效。
+ * @brief 主函数：单线程实现。
  * Single-threaded implementation.
  * @param args[in/out] 参数解析结构体。
  * Parameter parsing structure.
  * @param in_buf[in] 输入缓冲区，格式为`[*in_shape, 4]`。
  * Input buffer, format is `[*in_shape, 4]`.
- * @param out_buf[out] 输出缓冲区。大小由`io_GetViewOutInfo`指定。
- * Output buffer. The size is specified by `io_GetViewOutInfo`.
+ * @param out_buf[out] 输出缓冲区。大小由`io_GetOutInfo`指定。
+ * Output buffer. The size is specified by `io_GetOutInfo`.
  * @param in_shape[in] 输入缓冲区形状。关于具体内容，参考下面的注释说明。
  * Input buffer shape. For specific content, refer to the comment description below.
  * @return 错误码，0表示成功，非0表示失败。若函数无返回，则可能返回随机值
  * Error code, 0 means success, non-0 means failure. If the function has no return, it may return a random value.
  */
-SHARED int f0p(args_t* args, uint8_t* in_buf, uint8_t* out_buf, size_t in_shape[ ]){
+SHARED int f0(args_t* args, uint8_t* in_buf, uint8_t* out_buf, size_t in_shape[ ]){
     // Implement here.
+    // f1(1, 0, args, in_buf, out_buf, in_shape);
+    return 0;
+}
+
+/**
+ * @brief 获取预览图像输出信息。在调用`f0p`或`f1p`之前会被调用以确认输出缓冲区大小及其属性。仅在编码阶段扩展中有效。
+ * Get output data information. It will be called before calling `f0` or `f1` to confirm the size and attributes of the output buffer. Only valid in the encoding stage extension.
+ * @param args[in/out] 参数解析结构体。
+ * Parameter parsing structure.
+ * @param in_shape[in] 输入缓冲区形状。关于具体内容，参考下面的注释说明。
+ * Input buffer shape. For specific content, refer to the comment description below.
+ * @param out_shape[out] 输出缓冲区形状。关于具体内容，参考下面的注释说明。
+ * Output buffer shape. For specific content, refer to the comment description below.
+ * @return 错误码，0表示成功，非0表示失败。若函数无返回，则返回随机值
+ * Error code, 0 means success, non-0 means failure. If the function has no return, it returns a random value
+ */
+SHARED int io_GetViewOutInfo(args_t* args, size_t in_shape[ ], size_t out_shape[ ]){
+    // 指定输出的尺寸及其属性
+    // Specify the size and attributes of the output
+    // const size_t height = in_shape[0];
+    // const size_t width = in_shape[1];
+    // out_shape[0] = height;
+    // out_shape[1] = width;
+    // *attr = ATTR_NONE;
+    // Other Implement here.
     return 0;
 }
 
@@ -211,6 +194,27 @@ SHARED int f1p(size_t threads, size_t idx, args_t* args, uint8_t* in_buf, uint8_
     // Implement here.
     return 0;
 }
+
+/**
+ * @brief 预览图像函数：单线程实现。仅在编码阶段扩展中有效。
+ * Single-threaded implementation.
+ * @param args[in/out] 参数解析结构体。
+ * Parameter parsing structure.
+ * @param in_buf[in] 输入缓冲区，格式为`[*in_shape, 4]`。
+ * Input buffer, format is `[*in_shape, 4]`.
+ * @param out_buf[out] 输出缓冲区。大小由`io_GetViewOutInfo`指定。
+ * Output buffer. The size is specified by `io_GetViewOutInfo`.
+ * @param in_shape[in] 输入缓冲区形状。关于具体内容，参考下面的注释说明。
+ * Input buffer shape. For specific content, refer to the comment description below.
+ * @return 错误码，0表示成功，非0表示失败。若函数无返回，则可能返回随机值
+ * Error code, 0 means success, non-0 means failure. If the function has no return, it may return a random value.
+ */
+SHARED int f0p(args_t* args, uint8_t* in_buf, uint8_t* out_buf, size_t in_shape[ ]){
+    // Implement here.
+    // f1p(1, 0, args, in_buf, out_buf, in_shape);
+    return 0;
+}
+
 
 /*
 缓冲区形状说明：

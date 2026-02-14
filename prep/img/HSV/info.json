@@ -1,0 +1,6 @@
+{
+    "name": "HSV调整",
+    "description": "调整整体色相、饱和度和亮度。\n支持智能色相修复",
+    "author": "emofalling",
+    "version": "1.0.0"
+}

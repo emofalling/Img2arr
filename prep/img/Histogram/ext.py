@@ -37,7 +37,6 @@ class UI(abcExt.UI):
         self.g_arr: NDArray[np.float64] = np.array([])
         self.b_arr: NDArray[np.float64] = np.array([])
         self.a_arr: NDArray[np.float64] = np.array([])
-        print("亮度 初始化")
     """用于绘制自己的UI空间。需要PySide6。若没有此函数，则表示没有UI。不需要构造函数和析构函数。"""
     def ui_init(self, widget: QWidget, ext: CDLL, save: dict | None):
         self_ref = weakref.ref(self)
@@ -419,10 +418,6 @@ class UI(abcExt.UI):
 
         self.chart_view.setUpdatesEnabled(True)
 
-        
-
-    def __del__(self):
-        print("图片图表 释放")
     def ui_save(self):
         # 实现时请务必更改函数名
         pass

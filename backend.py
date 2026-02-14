@@ -29,11 +29,6 @@ from itertools import islice
 
 import logging
 
-from PIL import Image # 以后会转而使用动态链接库而非PIL
-
-# 设置Image不限大小加载和保存图片
-Image.MAX_IMAGE_PIXELS = None
-
 import ctypes
 
 import sys, os
@@ -543,7 +538,7 @@ def call_processor(plproc: PlProc, tasks: int, name: str, dll: ctypes.CDLL, args
         f0_func = dll.f0p if hasattr(dll, "f0p") else None
     # 如果有多核，优先使用多核
     if hasattr(dll, f1_name):
-        logger.debug("Multi Core")
+        # logger.debug("Multi Core")
         # 准备返回值列表，默认值全是0
         ret_list = numpy.zeros(tasks if tasks > 0 else plproc.get_threads(), dtype=numpy.intc)
         # 多核
@@ -559,7 +554,7 @@ def call_processor(plproc: PlProc, tasks: int, name: str, dll: ctypes.CDLL, args
         result.ret = ret
     # 否则，尝试单核
     elif hasattr(dll, f0_name):
-        logger.debug("Single Core")
+        # logger.debug("Single Core")
         ret_main = ctypes.c_int(0)
         # ret = PlProcCore.SingleCore(bytes(name, "utf-8"), f0_func, args, ctypes.byref(ret_main), 
         #                             inbuf_ptr, outbuf_ptr, in_shape_ct)
@@ -576,11 +571,11 @@ def call_processor(plproc: PlProc, tasks: int, name: str, dll: ctypes.CDLL, args
     return result
 
 class Img2arrPIPE:
-    def __init__(self, imgf: str, extdc: ExtList):
+    def __init__(self, img: NDArray[numpy.uint8], extdc: ExtList):
         # 计算单元
         self.plproc = PlProc(threads)
         # 原图
-        self.img = numpy.array(Image.open(imgf).convert("RGBA"), dtype=numpy.uint8)
+        self.img = img
         # 设置self.img只读
         self.img.flags.writeable = False
         # reshape
@@ -792,7 +787,7 @@ class Pre_iter:
         # 查找users包含i的缓冲区。从后往前找，不然会因为使用了较前的缓冲区而导致多更新了几步，从而性能下降
         # for buf in reversed(self.img_pre_buf):
         for idx, buf in reversed(list(enumerate(self.img_pre_buf))):
-            logging.debug(f"idx: {idx}, readers: {buf.readers}, writers: {buf.writers}")
+            # logging.debug(f"idx: {idx}, readers: {buf.readers}, writers: {buf.writers}")
             if i in buf.writers:
                 return buf.writers[0]
         # 没有，则i是最后一项（不涉及到任何的中间缓冲区更改）
@@ -807,6 +802,9 @@ class Pre_iter:
         is_tail: 是否是最后一个预处理  
         *：有一个特殊的虚扩展""(空字符串)，它固有属性为ATTR_REUSE，且只负责将输入复制到输出（如果数组指针不同）。利用它能快速的实现扩展的禁用。
         """
+
+        if name == "":
+            logging.debug("Skip empty ext")
 
         # 分配头缓冲区（很重要，后面要进行大小判断）
         # 如果是head，in_buf一定是img
@@ -899,7 +897,7 @@ class Pre_iter:
                 # 有输出缓冲区，添加写指针
                 self.add_buf_writer(self.i)
         
-        logger.debug(f"Call pre index {self.i}, {in_buf_name} -> {out_buf_name}")
+        # logger.debug(f"Call pre index {self.i}, {in_buf_name} -> {out_buf_name}")
             
 
         # 调用预处理

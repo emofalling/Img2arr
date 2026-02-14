@@ -16,7 +16,7 @@ from PySide6.QtWidgets import (
 )
 
 from PySide6.QtGui import (QCloseEvent, 
-    QPixmap, QImage, QPainter, QPalette, 
+    QPixmap, QImage, QPainter, QPalette, QShortcut, QKeySequence, 
     QFontDatabase, QFont, QFontMetrics, 
     QTextOption, 
     QWheelEvent, QMouseEvent, QKeyEvent, QResizeEvent, QDragEnterEvent, QDropEvent, QContextMenuEvent,
@@ -59,6 +59,11 @@ from lib.datatypes import JsonDataType
 import numpy
 from numpy.typing import NDArray
 
+from PIL import Image # 未来应该换成动态链接库
+
+# 设置Image不限大小加载和保存图片
+Image.MAX_IMAGE_PIXELS = None
+
 import backend  # 后端
 
 from lib.DebugQObjects import QDebugWidget
@@ -89,10 +94,6 @@ view_realtime_update = False
 DEVICES_DEFAULT = [0, 1, 2, 3]
 
 defaultSetting: dict[str, JsonDataType] = {
-#     "LastOpenDir": "",
-#     "directlyCloseWelcome": False,
-#     "Devices": [0, 1, 2, 3],
-#     "Parallel.Threads": 0, # 使用逻辑核心数
 }
 
 def LoadSet():
@@ -248,6 +249,9 @@ class WinMain(QObject):
             # Del:删除当前标签页
             elif event.key() == Qt.Key.Key_Delete:
                 self.closeTab(self.tabwdg.currentIndex())
+            # F2:重命名当前标签页
+            elif event.key() == Qt.Key.Key_F2:
+                self.renameTab(self.tabwdg.currentIndex())
             else:
                 event.ignore()
         self.tabwdg.keyPressEvent = tabwdg_keyPressEvent
@@ -386,19 +390,36 @@ class WinMain(QObject):
                 self.setstatus(f"正在打开文件：{data}", True)
                 file = data
                 try:
-                    pipe = backend.Img2arrPIPE(file, self.ext)
+                    img = numpy.array(Image.open(file).convert("RGBA"), dtype=numpy.uint8)
                 except:
                     logger.error(f"{file} 打开失败。错误信息:", exc_info=True)
                     continue
-                self.new_pagemain_signal.emit(file, pipe)
-                del file
+            elif isinstance(data, QImage):
+                file = "剪贴板"
+                if data.format() != QImage.Format.Format_RGBA8888:
+                    logger.warning(f"QImage格式不正确: {data.format()}，将尝试转换为Format_RGBA8888")
+                try:
+                    width = data.width()
+                    height = data.height()
+                    channels = 4
+                    img = numpy.frombuffer(data.bits(), dtype=numpy.uint8).reshape(height, width, channels).copy()
+                except Exception as e:
+                    logger.error("转换QImage到numpy数组失败。错误信息:", exc_info=True)
+                    continue
             else:
-                pipe = None # 以后要改
+                logger.warning(f"加载管道中有一个无效数据: {data}")
+                file = "未知"
+                img = None # 以后要改
+            if img is not None:
+                pipe = backend.Img2arrPIPE(img, self.ext)
+                self.new_pagemain_signal.emit(file, pipe)
+            else:
+                pipe = None
             # 一定要清理资源！！！
             # 如果不del pipe，会产生两份引用
             # 一份是emit的pipe，另一份是局部变量pipe
             # 如果不删除，局部变量pipe会一直驻留在内存中，导致删不掉
-            del pipe, data
+            del pipe, data, file
     class WelcomePage(QWidget):
         def __init__(self, parent: "WinMain"):
             super().__init__()
@@ -465,6 +486,43 @@ class WinMain(QObject):
                 
             self.dragEnterEvent = dragEnterEvent
             self.dropEvent = dropEvent
+
+            # 粘贴
+            def paste_event():
+                clipboard = QApplication.clipboard()
+                mime_data = clipboard.mimeData()
+                has_data = False
+                # 查找图像内容
+                if mime_data.hasImage():
+                    # put到队列中，等待处理
+                    image_cp = mime_data.imageData()
+                    image = QImage(image_cp)
+                    # 变为RGBA8888图像
+                    if image.format() != QImage.Format.Format_RGBA8888:
+                        image = image.convertToFormat(QImage.Format.Format_RGBA8888)
+                    parent.load_queue.put(image)
+                    has_data = True
+                enable_multi = GetSet("ClipBoardMultiType")
+                if GetSet("ClipBoardMultiType") is None:
+                    SetSet("ClipBoardMultiType", False)
+                    enable_multi = False
+                # 查找url。如果has_data并且enable_multi为True，或not has_data，则查找url
+                if (not has_data or enable_multi) and mime_data.hasUrls():
+                    urls = mime_data.urls()
+                    files = []
+                    for url in urls:
+                        file = url.toLocalFile()
+                        if os.path.isfile(file):
+                            files.append(file)
+                    if files:
+                        for file in files:
+                            parent.load_queue.put(file)
+                    has_data = True
+            # 添加粘贴事件
+            paste_shortcut = QShortcut(QKeySequence("Ctrl+V"), self)
+            paste_shortcut.activated.connect(paste_event)
+
+
         def DestroyEvent(self) -> bool:
             # 对于欢迎页面，询问性关闭
             parent = self.parent_ref()

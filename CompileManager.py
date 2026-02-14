@@ -34,11 +34,15 @@ import platform
 
 import weakref
 
+# 监听文件变动
+from watchdog.observers import Observer
+from watchdog.events import DirDeletedEvent, DirModifiedEvent, DirMovedEvent, FileDeletedEvent, FileModifiedEvent, FileMovedEvent, FileSystemEvent, FileSystemEventHandler
+
 from lib import SpecialArch
 
 runtime_name_list: list[str] = ['PlProcCore.cpp']
 
-
+auto_reload = True # 自动重新加载（如果编译成功）
 
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
 
@@ -139,16 +143,27 @@ def verify_hash(dir: str) -> bool | None:
 
 
 class WinMain(QObject):
+    reload_signal = Signal()
     def __init__(self, app: QApplication, win: QMainWindow):
         super().__init__()
         self.app = app
         self.win = win
         self.setwindow()
         self.setcontext()
+        self.reload_signal.connect(self.Reload)
+        if auto_reload:
+            # 启动文件监听器，监听dir底下所有.c/.cpp文件的变动。
+            self.event_handler = self.ChangeHandler(self)
+            observer = Observer()
+            for dir in ["./lib", "./open", "./prep", "./out", "./code"]:
+                observer.schedule(self.event_handler, dir, recursive=True)
+            observer.start()
     def setwindow(self):
         self.win.resize(800, 600)
         self.win.setWindowTitle("img2arr编译管理器")
         self.win.setWindowIcon(self.app.style().standardIcon(QStyle.StandardPixmap.SP_ComputerIcon))
+        # 置顶
+        self.win.setWindowFlags(Qt.WindowType.WindowStaysOnTopHint)
     def setcontext(self):
         self.main_widget = QWidget()
         self.win.setCentralWidget(self.main_widget)
@@ -483,13 +498,29 @@ class WinMain(QObject):
         self.load_prep_wdg()
         self.load_code_wdg()
         self.load_out_wdg()
-
-
-
-
-
-
     
+    
+    class ChangeHandler(FileSystemEventHandler):
+        def __init__(self, parent: WinMain) -> None:
+            super().__init__()
+            self.parent = parent
+        def is_compiling_file(self, src_path: str | bytes) -> bool:
+            return src_path.endswith(".c") or src_path.endswith(".cpp") or src_path.endswith(".rs") # type:ignore
+        def event_handler(self):
+            self.parent.reload_signal.emit()
+        def on_modified(self, event):
+            if self.is_compiling_file(event.src_path):
+                self.event_handler()
+        def on_created(self, event):
+            if self.is_compiling_file(event.src_path):
+                self.event_handler()
+        def on_deleted(self, event):
+            if self.is_compiling_file(event.src_path):
+                self.event_handler()
+        def on_moved(self, event):
+            if self.is_compiling_file(event.dest_path) != self.is_compiling_file(event.src_path): # 从非编译文件变为可编译文件，或者反之
+                self.event_handler()
+
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     win = QMainWindow()
