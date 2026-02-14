@@ -69,6 +69,50 @@ COLOR_NOTARGET = QColor(10, 80, 255, 150)
 # 编译失败。
 COLOR_ERROR = QColor(255, 0, 0, 150)
 
+# C++编译器名称
+CPP_COMPILER: str            = "g++"
+# 格式化用于输入和输出文件的参数。{in_file}会被替换为源文件路径， {out_file}会被替换为目标文件路径。
+CPP_COMPILER_IOF: list[str]  = ["{in_file}", "-o", "{out_file}"]
+# 额外参数。在C_COMPILER_IOF之后。
+CPP_COMPILER_ARGS: list[str] = [
+    "-shared", "-fPIC", # 必选项
+    "-O3",
+    "-std=c++23",
+    "-static-libgcc",
+    "-static-libstdc++",
+]
+# C编译器名称
+C_COMPILER: str            = "gcc"
+# 格式化用于输入和输出文件的参数。{in_file}会被替换为源文件路径， {out_file}会被替换为目标文件路径。
+C_COMPILER_IOF: list[str]  = ["{in_file}", "-o", "{out_file}"]
+# 额外参数。在C_COMPILER_IOF之后。
+C_COMPILER_ARGS: list[str] = [
+    "-shared", "-fPIC", # 必选项
+    "-O3",
+    "-std=c2x",
+    "-static-libgcc",
+]
+if system == "windows":
+    C_COMPILER_ARGS += ["-static"]
+
+class FormatDefaultDict(dict):
+    def __missing__(self, key):
+        return '{' + key + '}'
+
+def safe_format(string: str, **kwargs) -> str:
+    """安全的格式化，如果有未定义的参数则将这个部分不变，例如：
+    >>> safe_format("hello {name} and {age}, and {ext}",
+                    name="world", ext_="missing")
+    'hello world and {age}, and {ext}'
+    """
+    return string.format_map(FormatDefaultDict(kwargs))
+
+def format_str_list(list: Sequence[str], **kwargs) -> list[str]:
+    """格式化字符串列表，例如：
+    >>> format_str_list(["hello", "{name}", "{age}"], name="world", age=18)
+    ['hello', 'world', '18']
+    """
+    return [safe_format(string, **kwargs) for string in list]
 
 def generate_hash(dir: str) -> str:
     """生成编译哈希。遍历dir底下所有.c/.cpp文件，计算哈希值，并返回hashhex"""
@@ -305,14 +349,11 @@ class WinMain(QObject):
             print("开始编译运行库:", self.name)
             try:
                 if self.singlefile:
+                    output = f"{self.name[:self.name.rfind('.')]}_{platform_str}.{soext}"
                     subprocess.run([
-                        "g++",
-                        self.name,
-                        "-shared", "-fPIC",
-                        "-o", f"{self.name[:self.name.rfind('.')]}_{platform_str}.{soext}",
-                        "-O3",
-                        "-std=c++23",
-                        "-static"
+                        CPP_COMPILER,
+                        *format_str_list(CPP_COMPILER_IOF, in_file=self.name, out_file=output),
+                        *CPP_COMPILER_ARGS,
                     ], cwd=self.dir, check=True)
                 else:
                     output = self.target_output
@@ -322,7 +363,8 @@ class WinMain(QObject):
                         print("使用compile.sh")
                         subprocess.run([
                             "bash",
-                            "compile.sh"
+                            "compile.sh",
+                            output
                         ], cwd=self.dir, check=True)
                     # 否则，如果系统是Windows且底下有compile.ps1，则调用compile.ps1
                     elif system == 'windows' and os.path.isfile(os.path.join(self.dir, "compile.ps1")):
@@ -349,22 +391,16 @@ class WinMain(QObject):
                         # 如果存在main.c，则编译main.c
                         if os.path.isfile(os.path.join(self.dir, "main.c")):
                             subprocess.run([
-                                "gcc",
-                                "main.c",
-                                "-shared", "-fPIC",
-                                "-o", output,
-                                "-O3",
-                                "-static"
+                                C_COMPILER,
+                                *format_str_list(C_COMPILER_IOF, in_file="main.c", out_file=output),
+                                *C_COMPILER_ARGS
                             ], cwd=self.dir, check=True)
                         # 否则，如果存在main.cpp，则编译main.cpp
                         elif os.path.isfile(os.path.join(self.dir, "main.cpp")):
                             subprocess.run([
-                                "g++",
-                                "main.cpp",
-                                "-shared", "-fPIC",
-                                "-o", output,
-                                "-O3",
-                                "-static"
+                                CPP_COMPILER,
+                                *format_str_list(CPP_COMPILER_IOF, in_file="main.cpp", out_file=output),
+                                *CPP_COMPILER_ARGS
                             ], cwd=self.dir, check=True)
                         # 否则，提示错误
                         else:
@@ -501,7 +537,7 @@ class WinMain(QObject):
     
     
     class ChangeHandler(FileSystemEventHandler):
-        def __init__(self, parent: WinMain) -> None:
+        def __init__(self, parent: "WinMain") -> None:
             super().__init__()
             self.parent = parent
         def is_compiling_file(self, src_path: str | bytes) -> bool:

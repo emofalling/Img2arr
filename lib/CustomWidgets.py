@@ -350,7 +350,7 @@ class CustomBrush:
         brush = QBrush(tile_pixmap)
         return brush
 
-def ColorDialog_getColor(parent: QWidget | None = None, initialColor: tuple[int, int, int, int] | None = None, show_alpha = False, currentColorChanged: Callable[[tuple[int, int, int, int]]] | None = None) -> tuple[int, int, int, int] | None:
+def ColorDialog_getColor(parent: QWidget | None = None, initialColor: tuple[int, int, int, int] | None = None, show_alpha = False, currentColorChanged: Callable[[tuple[int, int, int, int]], None] | None = None) -> tuple[int, int, int, int] | None:
     """颜色选择对话框"""
     dialog = QColorDialog(parent)
     if initialColor is not None:

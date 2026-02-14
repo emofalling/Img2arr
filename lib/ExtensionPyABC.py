@@ -81,7 +81,7 @@ class abcExt(ModuleType):
             """
             ...
         
-        def ext_ColorDialogGetColor(self, parent: QWidget | None = None, initialColor: tuple[int, int, int, int] | None = None, show_alpha = False, currentColorChanged: Callable[[tuple[int, int, int, int]]] | None = None) -> tuple[int, int, int, int] | None:
+        def ext_ColorDialogGetColor(self, parent: QWidget | None = None, initialColor: tuple[int, int, int, int] | None = None, show_alpha = False, currentColorChanged: Callable[[tuple[int, int, int, int]], None] | None = None) -> tuple[int, int, int, int] | None:
             """调用颜色对话框来选择颜色。相比QtWidgets.QColorDialog.getcolor()，在未来的版本将会使用自己实现的颜色选择器代替此函数。"""
             # ...
             return ColorDialog_getColor(parent=parent, initialColor=initialColor, show_alpha = show_alpha, currentColorChanged=currentColorChanged)

@@ -2,6 +2,12 @@
 
 # 考虑到Intel处理器在长时间使用AVX512后极易发热降频，考虑到兼容性，默认不启用AVX512
 ENABLE_AVX512=true
+# 检查是否提供了输出文件名
+if [ -z "$1" ]; then
+    echo -e "\033[31m错误: 请提供输出文件名\033[0m"
+    echo "用法: $0 <输出文件名>"
+    exit 1
+fi
 # 第一个传入参数是输出文件名
 OUTPUT_FILE_NAME=$1
 
@@ -51,7 +57,7 @@ if [ "$ENABLE_AVX512" = true ]; then
 fi
 
 echo "链接主程序..."
-gcc main.c $LINK_OBJECTS -shared -fPIC -O3 -o $OUTPUT_FILE_NAME $DEFINE_FLAGS -static
+gcc main.c $LINK_OBJECTS -shared -fPIC -O3 -o $OUTPUT_FILE_NAME $DEFINE_FLAGS -lc -lgcc
 if [ $? -ne 0 ]; then
     echo -e "\033[31m链接失败\033[0m"
     exit 1
