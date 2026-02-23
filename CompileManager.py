@@ -93,7 +93,9 @@ C_COMPILER_ARGS: list[str] = [
     "-static-libgcc",
 ]
 if system == "windows":
-    C_COMPILER_ARGS += ["-static"]
+    C_COMPILER_ARGS += [
+        "-static"
+    ]
 
 class FormatDefaultDict(dict):
     def __missing__(self, key):

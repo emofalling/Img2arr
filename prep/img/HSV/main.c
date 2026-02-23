@@ -10,6 +10,10 @@
 
 // #include <required_custom_headers.h>
 
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
+
 // SHARED: 表示这个函数是导出函数
 // SHARED: This function is exported
 #if defined(_WIN32) || defined(_WIN64)
@@ -91,6 +95,14 @@ inline maxmin_flag_u8_res_t u8_max3_with_flag(uint8_t a, uint8_t b, uint8_t c){
     else return (maxmin_flag_u8_res_t){c, 2};
 }
 
+// 求一个角度的平均值。将它分解为sin和cos分量，并使用向量加法进行平均。
+inline float angle_average(float a, float b, float weight_a, float weight_b){
+    float x = cosf(a) * weight_a + cosf(b) * weight_b;
+    float y = sinf(a) * weight_a + sinf(b) * weight_b;
+    if(x == 0 && y == 0) return NAN; // 无意义
+    return atan2f(y, x);
+}
+
 // 角度归一化。result in [0, 1), a real in [0, 1).
 inline float angle_normalize(float a){
     return a - floorf(a);
@@ -102,55 +114,66 @@ inline void swapf(float* a, float* b){
     *b = temp;
 }
 
-inline void swaparrf(float arr[], int i, int j, float with[]){
+inline void swaparr2f(float arr[], int i, int j, float with1[], float with2[]){
     float temp = arr[i];
     arr[i] = arr[j];
     arr[j] = temp;
 
-    if(with != NULL){
-        temp = with[i];
-        with[i] = with[j];
-        with[j] = temp;
+    if(with1 != NULL){
+        temp = with1[i];
+        with1[i] = with1[j];
+        with1[j] = temp;
+    }
+    if(with2 != NULL){
+        temp = with2[i];
+        with2[i] = with2[j];
+        with2[j] = temp;
     }
 }
 
+// 计算两个色调的差值。由于色调是一个圆环，所以需要特殊处理。result [0, 0.5] map to [0, 1]。
+inline float hue_diff(float h1, float h2){
+    float d = fabsf(h1 - h2);
+    return fminf(d, 1.0f - d);
+}
+
 // 快速选择算法 - 返回第k小的元素，并部分排序数组。*with用于指定与之同时排序的数组。
-static float quickselectf(float arr[], int left, int right, int k, float with[]) {
+static float quickselectf(float arr[], int left, int right, int k, float with1[], float with2[]) {
     if (left == right) return arr[left];
     
     // 使用中位数法选择pivot
     int mid = left + (right - left) / 2;
     
     // 对左、中、右三个元素排序
-    if (arr[right] < arr[left]) swaparrf(arr, left, right, with);
-    if (arr[mid] < arr[left]) swaparrf(arr, left, mid, with);
-    if (arr[right] < arr[mid]) swaparrf(arr, mid, right, with);
+    if (arr[right] < arr[left]) swaparr2f(arr, left, right, with1, with2);
+    if (arr[mid] < arr[left]) swaparr2f(arr, left, mid, with1, with2);
+    if (arr[right] < arr[mid]) swaparr2f(arr, mid, right, with1, with2);
     
     float pivot = arr[mid];
-    swaparrf(arr, mid, right - 1, with);
+    swaparr2f(arr, mid, right - 1, with1, with2);
     
     int i = left, j = right - 1;
     while (i < j) {
         while (arr[++i] < pivot);
         while (j > left && arr[--j] > pivot);
-        if (i < j) swaparrf(arr, i, j, with);
+        if (i < j) swaparr2f(arr, i, j, with1, with2);
     }
     
-    if (i < right - 1) swaparrf(arr, i, right - 1, with);
+    if (i < right - 1) swaparr2f(arr, i, right - 1, with1, with2);
     
     if (i == k) return arr[i];
-    else if (i > k) return quickselectf(arr, left, i - 1, k, with);
-    else return quickselectf(arr, i + 1, right, k, with);
+    else if (i > k) return quickselectf(arr, left, i - 1, k, with1, with2);
+    else return quickselectf(arr, i + 1, right, k, with1, with2);
 }
 
 // 取数组中位数。会对原数组进行部分排序。with用于指定与之同时排序的数组。
-static float medianf(float arr[], int n, float with[]){
+static float medianf(float arr[], int n, float with1[], float with2[]){
     if (n & 1) {
-        return quickselectf(arr, 0, n - 1, n / 2, with);
+        return quickselectf(arr, 0, n - 1, n / 2, with1, with2);
     } else {
         // 偶数个元素时，返回中间两个数的平均值
-        float m1 = quickselectf(arr, 0, n - 1, n / 2 - 1, with);
-        float m2 = quickselectf(arr, n / 2, n - 1, n / 2, with);
+        float m1 = quickselectf(arr, 0, n - 1, n / 2 - 1, with1, with2);
+        float m2 = quickselectf(arr, n / 2, n - 1, n / 2, with1, with2);
         return (m1 + m2) * 0.5f;
     }
 }
@@ -430,13 +453,15 @@ SHARED int f1(size_t threads, size_t idx, args_t* args, uint8_t* in_buf, uint8_t
             float traces_Hs[8][sample_times];
             // 8个扫描点每次采样时与原点的距离的的倒数。
             float traces_rdis[8][sample_times];
+            // 色相差缓存数组
+            float huediff_tmp[sample_times];
             for(int i=0; i<8; i++){
                 for(int j=0; j<sample_times; j++){
                     traces_Hs[i][j] = NAN;
                     traces_rdis[i][j] = NAN;
                 }
             }
-            float middis_tmp[sample_times], middis_tmp2[sample_times]; // MAD去噪的缓存数组
+            float middis_huediff[sample_times], huediff_copy[sample_times]; // MAD去噪的缓存数组
             // 8个扫描点的最终的H值。
             float traces_Hs_finally[8] = {
                 NAN, NAN,
@@ -521,29 +546,37 @@ SHARED int f1(size_t threads, size_t idx, args_t* args, uint8_t* in_buf, uint8_t
                     trace_info[i].y = (trace_info[i].first_y + trace_info[i].y) / 2U;
                 }
                 if(sample_len >= 3){ // 有效数据，MAD去噪后求平均值
-                    float mid = medianf(traces_Hs[i], sample_len, traces_rdis[i]);
-                    // 此时traces_Hs[i]和traces_rdis[i]顺序已经发生变化。但相对顺序不变。
+                    // 计算每个颜色与0°的色相差
                     for(int j=0; j<sample_len; ++j){
-                        middis_tmp[j] = fabsf(traces_Hs[i][j] - mid);
-                        middis_tmp2[j] = middis_tmp[j];
+                        huediff_tmp[j] = hue_diff(traces_Hs[i][j], 0.0f);
                     }
-                    float mad = medianf(middis_tmp2, sample_len, NULL); // MAD去噪后的标准差。
+                    float mid = medianf(huediff_tmp, sample_len, traces_rdis[i], traces_Hs[i]);
+                    // 此时traces_Hs[i]和traces_rdis[i]顺序已经发生变化。但相对顺序不变。
+                    // middis_huediff: 存储每个色差与中点的差值。顺序应与huediff_tmp和traces_Hs[i]保持一致。
+                    // huediff_copy: 复制huediff_tmp
+                    for(int j=0; j<sample_len; ++j){
+                        middis_huediff[j] = fabsf(huediff_tmp[j] - mid);
+                        huediff_copy[j] = huediff_tmp[j];
+                    }
+                    float mad = medianf(middis_huediff, sample_len, NULL, NULL); // MAD去噪后的标准差。
                     float threshold = mad_k * mad;
-                    // 此时middis_tmp2顺序已经发生变化，但是middis_tmp不变，与traces_Hs[i]保持一致。
-                    // 同时使用middis_tmp2存储没有被mad筛出去的值。
+                    // 此时middis_huediff顺序已经发生变化，但是huediff_copy与huediff_tmp不变，与traces_Hs[i]保持一致。
+                    // 同时使用huediff_copy存储没有被mad筛出去的值。
                     size_t H_count = 0;
                     for(int j=0; j<sample_len; ++j){
-                        if(middis_tmp[j] <= threshold){
-                            middis_tmp2[H_count++] = traces_Hs[i][j];
+                        if(huediff_copy[j] <= threshold){
+                            huediff_copy[H_count++] = traces_Hs[i][j];
                         }
                     }
-                    // 计算平均数
-                    float *arr = middis_tmp2;
+                    // 此时huediff_copy的前H_count个值又变为原始的色相值，不是色相差了
+                    // 计算角度平均数，见上文。
+                    float *arr = huediff_copy;
                     int arrlen = H_count;
                     if(arrlen == 0){
                         arr = traces_Hs[i];
                         arrlen = sample_len;
                     }
+                    /*
                     float H_sum = 0;
                     float H_div = 0.0f;
                     for(int j=0; j<arrlen; ++j){
@@ -551,10 +584,26 @@ SHARED int f1(size_t threads, size_t idx, args_t* args, uint8_t* in_buf, uint8_t
                         H_div += traces_rdis[i][j];
                     }
                     traces_Hs_finally[i] = H_sum / H_div;
-
+                    */
+                    float H_sin_sum = 0.0f, H_cos_sum = 0.0f;
+                    float weight_sum = 0.0f;
+                    for(int j=0; j<arrlen; ++j){ 
+                        // 分解向量
+                        float angle = arr[j] * 2.0f * M_PI; // 将[0, 1)映射到[0, 2π)
+                        float weight = traces_rdis[i][j];
+                        H_sin_sum += sin(angle) * weight;
+                        H_cos_sum += cos(angle) * weight;
+                        weight_sum += weight;
+                    }
+                    if(H_sin_sum == 0.0f && H_cos_sum == 0.0f){
+                        traces_Hs_finally[i] = NAN; // 无法确定方向，保持为NAN。
+                    }else{
+                        traces_Hs_finally[i] = atan2f(H_sin_sum / weight_sum, H_cos_sum / weight_sum) / (2.0f * M_PI);
+                    }
                 }
                 else if(sample_len == 2){ // 只有两个有效数据，计算平均数
-                    traces_Hs_finally[i] = (traces_Hs[i][0]+traces_Hs[i][1]) * 0.5f;
+                    // traces_Hs_finally[i] = (traces_Hs[i][0]+traces_Hs[i][1]) * 0.5f;
+                    traces_Hs_finally[i] = angle_average(traces_Hs[i][0] * 2 * M_PI, traces_Hs[i][1] * 2 * M_PI, traces_rdis[i][0], traces_rdis[i][1]) / (2.0f * M_PI);
                 }
                 else if(sample_len == 1){ // 只有一个有效数据，直接使用这个值。
                     traces_Hs_finally[i] = traces_Hs[i][0];
@@ -563,6 +612,7 @@ SHARED int f1(size_t threads, size_t idx, args_t* args, uint8_t* in_buf, uint8_t
             }
             // 加权求和。取距离的倒数
             // if(dis_max > 0.0f){
+                /*
                 float H_sum = 0.0f;
                 float H_divider = 0.0f;
                 for(int i=0; i<total_points; ++i){
@@ -578,6 +628,26 @@ SHARED int f1(size_t threads, size_t idx, args_t* args, uint8_t* in_buf, uint8_t
                 }
 
                 hsv.h = H_sum / H_divider;
+                */
+
+            float H_sin_sum = 0.0f, H_cos_sum = 0.0f;
+            float weight_sum = 0.0f;
+            for(int i=0; i<total_points; ++i){
+                if(!isnan(traces_Hs_finally[i])){
+                    // 分解向量
+                    float angle = traces_Hs_finally[i] * 2.0f * M_PI;
+                    float weight = rdistancef(x, y, trace_info[i].x, trace_info[i].y);
+                    H_sin_sum += sin(angle) * weight;
+                    H_cos_sum += cos(angle) * weight;
+                    weight_sum += weight;
+                }
+                if(H_sin_sum == 0.0f && H_cos_sum == 0.0f){
+                    hsv.h = NAN; // 无法确定方向，保持为NAN。
+                }else{
+                    hsv.h = atan2f(H_sin_sum / weight_sum, H_cos_sum / weight_sum) / (2.0f * M_PI);
+                }
+            }
+
             // } 
 
             // 写回缓冲区以供其他线程使用。
