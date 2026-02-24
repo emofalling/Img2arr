@@ -620,10 +620,10 @@ SHARED int f1(size_t threads, size_t idx, args_t* args, uint8_t* in_buf, uint8_t
                         float dis = rdistancef(x, y, trace_info[i].x, trace_info[i].y);
                         assert(!isnan(dis));
                         float weight = 1.0f / dis;
-                        // H_sum += traces_Hs_finally[i] * weight;
-                        // H_divider += weight;
-                        H_sum += traces_Hs_finally[i];
-                        H_divider += 1;
+                        H_sum += traces_Hs_finally[i] * weight;
+                        H_divider += weight;
+                        // H_sum += traces_Hs_finally[i];
+                        // H_divider += 1;
                     }
                 }
 
