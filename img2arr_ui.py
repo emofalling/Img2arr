@@ -24,7 +24,7 @@ from PySide6.QtGui import (QCloseEvent,
 
 from PySide6.QtCore import Qt, QTimer, QObject, QMetaObject, QGenericArgument, Signal, QUrl, QRect, QRectF, Slot
 
-from threading import Thread, Condition
+from threading import Thread, Condition, Event
 
 import queue
 
@@ -32,7 +32,6 @@ import logging
 import logging.config
 
 import sys, os
-import gc
 import time
 import json
 import weakref
@@ -566,14 +565,9 @@ class WinMain(QObject):
         self.tabwdg.setTabText(index, text)
     
     def RemoveTab(self, index: int):
-        # 获取index所对widget
         tab_widget = self.tabwdg.widget(index)
-        # 删除tab
         self.tabwdg.removeTab(index)
-        # 删除widget
-        # tab_widget.setParent(None)
         tab_widget.deleteLater()
-        gc.collect()
 
     def closeTab(self, index: int):
         # 判断是否为欢迎页面
@@ -652,6 +646,7 @@ class PageMain(QDebugWidget):
         # 预处理项列表
         self.pre_list: list[PreProcessor] = []
         # 预处理刷新条件变量
+        self._pre_stop = Event()
         self.pre_update_notify: Optional[Condition] = Condition()
         self.pre_update_index: int | None = None # 线程更新时的索引。None表示更新完毕。
         # 预处理输出预览更新信号
@@ -664,6 +659,7 @@ class PageMain(QDebugWidget):
         # 编码器py部分。当有新的编码器被选择时，会覆盖为新的编码器py部分或None。
         self.code_py: ExtensionPyABC.abcExt.UI | None = None
         # 编码器刷新条件变量
+        self._code_stop = Event()
         self.code_update_notify: Optional[Condition] = Condition()
         self.code_is_need_update = False # 编码器是否需要更新。将在唤醒前同时将其赋值为True以表示需要更新
         # 编码预览输出预览更新信号（不是编码输出
@@ -1318,21 +1314,17 @@ class PageMain(QDebugWidget):
     # 更新预处理管线的线程
     def PreUpdateThread(self):
         """更新预处理管线的线程"""
-        while True:
-            # 更新状态
+        while not self._pre_stop.is_set():
             self.pre_args_thread_state = 'idle'
-            if self.pre_update_notify is None:
-                break
             with self.pre_update_notify:
                 self.pre_update_notify.wait()
-            if self.pre_update_notify is None: # 结束
+            if self._pre_stop.is_set():
                 break
-            # 更新状态
             self.pre_args_thread_state = 'run'
-            resized = False # 是否需要更新输出尺寸
+            resized = False
             self.PreOutViewUpdateSignal.emit((False, -1, None))
-            time_calc_start, time_calc_end = 0, 0 # 预先初始化，避免Unbound
-            while self.pre_update_index is not None:
+            time_calc_start, time_calc_end = 0, 0
+            while self.pre_update_index is not None and not self._pre_stop.is_set():
                 # 如果更新之后没有再需要更新的，此时self.pre_update_index显然为None，自然结束
                 # 如果计算过程中拖动了，则self.pre_update_index会再次被赋值为需要更新的index，自然触发下一次更新
                 index = self.pre_update_index
@@ -1586,22 +1578,18 @@ class PageMain(QDebugWidget):
     def CodeUpdateThread(self):
         """更新编码输出的线程"""
         self_ref = weakref.ref(self)
-        while True:
-            # 更新状态
+        while not self._code_stop.is_set():
             self.code_args_thread_state = 'idle'
-            if self.code_update_notify is None: # 结束
-                break
             with self.code_update_notify:
                 self.code_update_notify.wait()
-            if self.code_update_notify is None: # 结束
+            if self._code_stop.is_set():
                 break
-            # 更新状态
             self.code_args_thread_state = 'run'
-            resized = False # 是否需要更新输出尺寸
+            resized = False
             self.CodeViewerOutViewUpdateSignal.emit((False, -1, None))
             time_calc_start = 0
             time_calc_end = 0
-            while self.code_is_need_update:
+            while self.code_is_need_update and not self._code_stop.is_set():
                 need_update = self.code_is_need_update
                 self.code_is_need_update = False
                 if not need_update: # 以防万一
@@ -1807,34 +1795,24 @@ class PageMain(QDebugWidget):
     def deleteLater(self):
         """清理回调"""
         logger.info("主页面被deleteLater()")
-        # 删除线程
-        notify = self.pre_update_notify
-        self.pre_update_notify = None
-        if notify:
-            with notify:
-                notify.notify_all()
-        notify = self.code_update_notify
-        self.code_update_notify = None
-        if notify:
-            with notify:
-                notify.notify_all()
-        # 删除所有预处理器界面
+        self._pre_stop.set()
+        self._code_stop.set()
+        with self.pre_update_notify:
+            self.pre_update_notify.notify_all()
+        with self.code_update_notify:
+            self.code_update_notify.notify_all()
+        self.pre_args_thread.join(timeout=2.0)
+        self.code_args_thread.join(timeout=2.0)
+        if hasattr(self, 'pipe'):
+            self.pipe.close()
+            del self.pipe
         for obj in self.pre_list:
-            # obj.setParent(None)
             obj.deleteLater()
-        # 删除编码器界面
-        # self.code_args_scrollarea.takeWidget().deleteLater()
-        # 手动删除所有图片查看器
-        # self.base_out_viewer.deleteLater()
-        # self.pre_out_viewer.deleteLater()
-        # 断开信号
         try: self.PreOutViewUpdateSignal.disconnect()
         except: pass
         try: self.CodeViewerOutViewUpdateSignal.disconnect()
         except: pass
-        # 绑定删除信号
         self.destroyed.connect(lambda: logger.info("主页面成功被destroyed()"))
-        # 删除自身
         super().deleteLater()
     def __del__(self):
         logger.info("主页面被__del__()")
