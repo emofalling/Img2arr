@@ -572,6 +572,7 @@ class WinMain(QObject):
         self.tabwdg.removeTab(index)
         # 删除widget
         # tab_widget.setParent(None)
+        assert tab_widget is not None, "tab widget should be not none"
         tab_widget.deleteLater()
         gc.collect()
 
