@@ -974,6 +974,10 @@ class PageMain(QDebugWidget):
         # 计算时间
         self.out_calc_time = QLabel("-- ")
         self.out_top_layout.addWidget(self.out_calc_time, alignment=Qt.AlignmentFlag.AlignRight)
+        # 启用/禁用mmap 复选框
+        self.out_mmap_checkbox = QCheckBox("mmap")
+        self.out_mmap_checkbox.setChecked(True)
+        self.out_top_layout.addWidget(self.out_mmap_checkbox, alignment=Qt.AlignmentFlag.AlignRight)
         # 选择编码器
         def selectOut():
             self = self_ref()
@@ -1769,6 +1773,7 @@ class PageMain(QDebugWidget):
 
     def test_OutSave(self, filepath: str):
 
+        time_start = time.perf_counter()
         # 调用Python部分获取参数
         if self.out_py is not None and hasattr(self.out_py, "update"):
             try:
@@ -1782,8 +1787,9 @@ class PageMain(QDebugWidget):
             args = backend.NULLPTR
             arglen = 0
         # 调用输出
+        out = None
         if self.out_name:
-            ret = self.pipe.Out(self.out_name, args, arglen)
+            out, ret = self.pipe.Out(self.out_name, args, arglen, filepath if self.out_mmap_checkbox else None) # 启用mmap
         else:
             logger.error("没有选择输出！")
         # 调用py的update_end（如果有）
@@ -1793,7 +1799,13 @@ class PageMain(QDebugWidget):
             except:
                 logger.error(f"输出 {self.out_name} 控制台 update_end 调用失败，错误信息：", exc_info=True)
         # 保存
-        self.pipe.out.tofile(filepath)
+        if out is not None:
+            out.tofile(filepath)
+
+        time_end = time.perf_counter()
+
+        self.out_calc_time.setText(AutoFmtTime(time_end - time_start))
+
 
 
     def DestroyEvent(self) -> bool:

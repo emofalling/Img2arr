@@ -42,6 +42,8 @@ import json
 
 import traceback
 
+import mmap # 用于内存映射文件
+
 from lib.datatypes import JsonDataType
 
 from lib import ExtensionPyABC, SpecialArch
@@ -589,8 +591,6 @@ class Img2arrPIPE:
         self.code_view = numpy.zeros_like(self.img)
         # 编码输出
         self.code_out = numpy.empty((0,), dtype=numpy.uint8)
-        # 输出
-        self.out = numpy.empty((0,), dtype=numpy.uint8)
 
         # 并发任务数。0表示使用线程数。
         self.tasks = 0 # 不建议动。会导致某些扩展无法正常工作。
@@ -659,8 +659,8 @@ class Img2arrPIPE:
         result = call_processor(self.plproc, self.tasks, name, dll, args, MidBuffer(self.pre), MidBuffer(self.code_out))
         # 返回结果
         return result
-    def Out(self, name: str, args: ExtensionPyABC.CPointerArgType, argslen: int) -> PIPENodeResult:
-        """输出。返回处理结果"""
+    def Out(self, name: str, args: ExtensionPyABC.CPointerArgType, argslen: int, mmap_file: str|None = None) -> tuple[numpy.ndarray | None, PIPENodeResult]:
+        """输出。(处理好的arr对象, 返回处理结果) use_mmap: 是否使用mmap作文件输出"""
         assert name != "", "输出器名称不能为空"
         # 获取对应名称输出器的动态链接库
         dll = self.extdc[EXT_TYPE_OUT]["img"][name][EXT_OP_CDLL]
@@ -675,12 +675,25 @@ class Img2arrPIPE:
         # resize到输出尺寸（如果需要的话）
         out_size = out_shape_ct[0]
         logger.debug(f"此次输出数据量: {out_size}")
-        if self.out.shape[0] != out_size:
-            self.out.resize((out_size,), refcheck=False)
-        # 调用输出器
-        result = call_processor(self.plproc, self.tasks, name, dll, args, MidBuffer(self.code_out), MidBuffer(self.out))
-        # 返回结果
-        return result
+        if mmap_file is None: # 不启用mmap
+            out = numpy.empty((out_size,), dtype=numpy.uint8)
+            # 调用输出器
+            result = call_processor(self.plproc, self.tasks, name, dll, args, MidBuffer(self.code_out), MidBuffer(out))
+            # 返回结果
+            return (out, result)
+        else:
+            # 打开文件，并预留空间，且加载到numpy的mmap
+            file = open(mmap_file, "w+b")
+            file.truncate(out_size)
+            mm = mmap.mmap(file.fileno(), out_size)
+            arr = numpy.ndarray(shape=(out_size,), dtype=numpy.uint8, buffer=mm)
+            # 调用输出器
+            result = call_processor(self.plproc, self.tasks, name, dll, args, MidBuffer(self.code_out), MidBuffer(arr))
+            # 销毁arr，关闭mmap
+            del arr
+            mm.close()
+            # 返回结果
+            return (None, result)
     def resetPrePIPE(self):
         """重置预处理链"""
         self.img_pre_buf.clear()
@@ -696,8 +709,8 @@ class Img2arrPIPE:
             del self.code_view
         if hasattr(self, 'code_out'):
             del self.code_out
-        if hasattr(self, 'out'):
-            del self.out
+        #if hasattr(self, 'out'):
+        #    del self.out
         self.img_pre_buf.clear()
     def __del__(self):
         logger.info("管线被删除")
