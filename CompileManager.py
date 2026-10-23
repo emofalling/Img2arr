@@ -89,6 +89,7 @@ C_COMPILER_IOF: list[str]  = ["{in_file}", "-o", "{out_file}"]
 C_COMPILER_ARGS: list[str] = [
     "-shared", "-fPIC", # 必选项
     "-O3",
+    "-march=native",
     "-std=c2x",
     "-static-libgcc",
 ]

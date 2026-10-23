@@ -593,6 +593,7 @@ class WinMain(QObject):
     def moveTabToNewWindow(self, index: int):
         # 获取index所对widget
         tab_widget = self.tabwdg.widget(index)
+        assert tab_widget is not None, "tab widget should be not none"
         # gc.collect()
         # 创建新窗口
         title = f"img2arr - {self.tabwdg.tabText(index)}"

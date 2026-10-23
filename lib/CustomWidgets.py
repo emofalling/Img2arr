@@ -186,7 +186,8 @@ class CustomUI:
             self.scene.addItem(self.qpixmap_item)
             # 设置gpview的基本属性
             self.gpview.setFrameShape(QFrame.Shape.NoFrame) # 无边框
-            self.gpview.setRenderHint(QPainter.RenderHint.Antialiasing)  # 抗锯齿
+            # self.gpview.setRenderHint(QPainter.RenderHint.Antialiasing)  # 抗锯齿
+            self.gpview.setRenderHint(QPainter.RenderHint.LosslessImageRendering) # 无损图像渲染
             # self.gpview.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)  # 平滑像素图变换 # 会导致棋盘格模糊
             self.gpview.setTransformationAnchor(QGraphicsView.ViewportAnchor.AnchorUnderMouse)  # 以鼠标位置为变换锚点
             self.gpview.setResizeAnchor(QGraphicsView.ViewportAnchor.AnchorUnderMouse)          # 以鼠标位置为缩放锚点
