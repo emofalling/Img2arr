@@ -684,6 +684,21 @@ class Img2arrPIPE:
     def resetPrePIPE(self):
         """重置预处理链"""
         self.img_pre_buf.clear()
+    def close(self):
+        """显式释放资源，确保 C 线程池等被立即回收"""
+        if hasattr(self, 'plproc'):
+            del self.plproc
+        if hasattr(self, 'img'):
+            del self.img
+        if hasattr(self, 'pre'):
+            del self.pre
+        if hasattr(self, 'code_view'):
+            del self.code_view
+        if hasattr(self, 'code_out'):
+            del self.code_out
+        if hasattr(self, 'out'):
+            del self.out
+        self.img_pre_buf.clear()
     def __del__(self):
         logger.info("管线被删除")
 
